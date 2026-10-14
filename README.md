@@ -22,7 +22,15 @@
 
 ## 1. 部署
 
-### Docker（推薦）
+### 一鍵部署到 Render（最快）
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/kuofat-lakeze/lakeze-go)
+
+1. 按上面的按鈕，用 GitHub 帳號登入 Render。
+2. 看到「Blueprint」畫面，直接按 **Apply**（設定都寫在 `render.yaml`：Docker、1 GB 持久磁碟、Starter 方案約 US$7/月；Render 的免費方案不支援磁碟，資料會在重啟後消失）。
+3. 約 3 到 5 分鐘後會拿到一個 `https://lakeze-go-xxxx.onrender.com` 網址，打開就能設定密碼開始用。
+
+### Docker（自己的主機）
 
 ```bash
 git clone https://github.com/kuofat-lakeze/lakeze-go.git
