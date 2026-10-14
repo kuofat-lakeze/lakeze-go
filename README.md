@@ -1,22 +1,30 @@
 # Lakeze Go
 
-自架的 ManyChat 平替：Messenger / Instagram 聊天自動化 web app。
+可對外收費的 ManyChat 平替：Messenger / Instagram 聊天自動化 SaaS。
 
-> **使用者點了 Meta 廣告（Click to Messenger / Click to Instagram）→ 立刻自動回覆 → 一顆按鈕把人導到你指定的網址**，並記錄聯絡人、來源廣告與點擊數。
-
-部署上去、打開網址、用 Facebook 登入把粉絲專頁連上，就能用。不需要改設定檔、不需要手動貼權杖。
+> 用戶註冊 → 用 Facebook 登入連接自己的粉絲專頁 → 設定「**Meta 廣告點擊 → 立刻自動回覆 → 按鈕導到指定網址**」→ 試用到期後透過 **PAYUNi 統一金流** 付費續用。
 
 ## 功能
 
-- 🔑 **Facebook 登入連接粉絲專頁**：授權後勾選專頁，自動儲存權杖、訂閱 Webhook、設定「開始使用」按鈕；綁定的 Instagram 專業帳號一併連接
-- ⚡ **一鍵登記 Webhook**：在後台按一下就向 Meta 登記回呼網址
-- 🎯 **觸發條件**：指定廣告 ID、ref 參數、任何廣告點擊、關鍵字、按鈕 payload、開始使用、預設回覆
-- 💬 **回覆步驟**：文字、文字 + 按鈕（網址 / payload）、快速回覆、圖片、延遲、加標籤、跳轉另一條流程
-- 🔗 **追蹤連結**：按鈕網址經過 `/r/<slug>` 再轉址，統計每條自動化的點擊
-- 👥 **聯絡人**：PSID、名字、來源廣告 ID / ref、標籤、互動時間，可手動回覆
-- 🧪 **模擬測試**：不用投廣告就能看某個廣告 ID / ref / 訊息會命中哪條規則、送出什麼
-- 🔐 Webhook 簽章驗證、事件去重、密碼雜湊登入
-- 🗄️ 零外部服務：Node.js 22 內建 SQLite，一個容器就能跑
+**給用戶**
+
+- 🔑 Facebook 登入連接粉絲專頁與 Instagram 專業帳號，自動訂閱 Webhook、設定「開始使用」按鈕
+- 🎯 觸發條件：指定廣告 ID、ref 參數、任何廣告點擊、關鍵字、按鈕 payload、開始使用、預設回覆
+- 💬 回覆步驟：文字、文字 + 按鈕（網址 / payload）、快速回覆、圖片、延遲、加標籤、跳轉另一條流程
+- 🔗 追蹤連結點擊統計、聯絡人來源廣告記錄、模擬測試、事件記錄
+- 💳 免費試用（天數可設）→ 線上刷卡購買月繳 / 年繳方案
+
+**給平台擁有者（第一位註冊者）**
+
+- ⚙️ 後台設定 Meta App、PayUni 金流、方案與價格、試用天數、是否開放註冊
+- 👥 用戶列表、方案狀態、手動延長（匯款 / 贈送）、全部訂單與營收
+- ⚡ 一鍵向 Meta 登記 Webhook
+
+**技術**
+
+- Node.js 22 + TypeScript + Express，內建 SQLite，一個容器就能跑
+- 多租戶資料隔離、Webhook 簽章驗證、事件去重、scrypt 密碼雜湊
+- PayUni 加解密與官方 SDK 相容（AES-256-GCM + SHA256 驗章），伺服器端 NotifyURL 入帳、金額比對、重複通知冪等
 
 ---
 
@@ -26,96 +34,70 @@
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/kuofat-lakeze/lakeze-go)
 
-1. 按上面的按鈕，用 GitHub 帳號登入 Render。
-2. 看到「Blueprint」畫面，直接按 **Apply**（設定都寫在 `render.yaml`：Docker、1 GB 持久磁碟、Starter 方案約 US$7/月；Render 的免費方案不支援磁碟，資料會在重啟後消失）。
-3. 約 3 到 5 分鐘後會拿到一個 `https://lakeze-go-xxxx.onrender.com` 網址，打開就能設定密碼開始用。
+按按鈕 → 用 GitHub 登入 Render → Apply。設定都在 `render.yaml`（Docker、1 GB 持久磁碟、Starter 方案約 US$7/月）。免費方案沒有磁碟且會休眠，Meta 的 Webhook 會超時，請勿使用。
 
 ### Railway
 
-repo 內有 `railway.json`，用 Dockerfile 建置。在 Railway 新增專案 → Deploy from GitHub repo → 選 `lakeze-go`，然後到服務的 **Volumes** 掛一顆磁碟到 `/data`（否則重新部署後資料會消失）。Hobby 方案每月 5 美元含用量。
+repo 內有 `railway.json`。新增專案 → Deploy from GitHub repo → 選 `lakeze-go`，到服務的 **Volumes** 掛一顆磁碟到 `/data`。
 
 ### Docker（自己的主機）
 
 ```bash
-git clone https://github.com/kuofat-lakeze/lakeze-go.git
-cd lakeze-go
-docker compose up -d
+git clone https://github.com/kuofat-lakeze/lakeze-go.git && cd lakeze-go
+docker compose up -d        # http://主機:3000，資料存在 lakeze-data volume
 ```
 
-打開 `http://你的主機:3000`。資料存在 `lakeze-data` volume。
-
-### Render / Railway / Fly 等平台
-
-repo 內有 `Dockerfile` 與 `render.yaml`，連結 repo 即可自動部署。記得掛一個持久磁碟到 `/data`（Render 的 `render.yaml` 已設定）。
-
-### 直接跑 Node
-
-需求：Node.js **22.13 以上**。
+### 直接跑 Node（需 22.13 以上）
 
 ```bash
-npm install
-npm run build
-npm start          # 預設 3000 埠，資料存 ./data/app.db
+npm install && npm run build && npm start    # 開發：npm run dev
 ```
 
-開發模式：`npm run dev`。
-
-### 環境變數（全部選填）
-
-| 變數 | 說明 |
-| --- | --- |
-| `PORT` | 埠號，預設 3000 |
-| `DATABASE_PATH` | SQLite 檔案，預設 `./data/app.db`（Docker 內為 `/data/app.db`） |
-| `ADMIN_PASSWORD`、`PUBLIC_URL`、`META_APP_ID`、`META_APP_SECRET`… | 只在第一次啟動時當初始值寫進資料庫，之後以後台「設定」頁為準 |
-
-> Meta 要求 Webhook 與 OAuth 都走 **https**。本機測試可用 [ngrok](https://ngrok.com/) 或 Cloudflare Tunnel 把 3000 埠開到外網。
+環境變數全部選填，見 `.env.example`。Meta 要求 Webhook 與 OAuth 都走 **https**；本機測試可用 ngrok 或 Cloudflare Tunnel。
 
 ---
 
-## 2. 第一次使用（約 10 分鐘）
+## 2. 平台擁有者第一次設定（約 15 分鐘）
 
-### 2.1 設定後台密碼
+### 2.1 註冊
 
-第一次打開網址會要求設定管理員密碼。
+打開網址，**第一位註冊的人就是平台擁有者**，之後註冊的都是一般用戶（會拿到試用期）。也可以用 `ADMIN_EMAIL` / `ADMIN_PASSWORD` 環境變數在啟動時建立擁有者。
 
-### 2.2 建立 Meta App
+### 2.2 Meta App
 
 1. 到 [developers.facebook.com/apps](https://developers.facebook.com/apps/) 建立 App，類型選 **商家（Business）**。
-2. 加入產品：**Facebook 登入（Facebook Login for Business）**、**Messenger**；要做 Instagram 也加入 **Instagram**。
-3. 「App 設定 → 基本資料」複製 **App ID** 與 **App Secret**，貼到後台「設定」頁並儲存。
+2. 加入產品：**Facebook 登入（Facebook Login for Business）**、**Messenger**、**Instagram**。
+3. 「App 設定 → 基本資料」複製 App ID 與 App Secret，填到後台「平台設定 → 2. Meta App」。
+4. 把後台顯示的 OAuth 重新導向網址（`https://你的網域/auth/facebook/callback`）貼到 Meta App 的「Facebook 登入 → 設定 → 有效的 OAuth 重新導向 URI」。
+5. 後台按「自動向 Meta 登記 Webhook」。失敗的話手動到 Messenger → 設定 → Webhooks 填回呼網址與驗證權杖，訂閱 `messages`、`messaging_postbacks`、`messaging_referrals`、`messaging_optins`。
 
-### 2.3 填 OAuth 重新導向網址
+> 所有用戶都會透過你的這個 Meta App 連接他們的粉絲專頁。要對不是 App 測試人員的用戶生效，App 必須送審 `pages_messaging`、`pages_show_list`、`pages_manage_metadata`、`instagram_basic`、`instagram_manage_messages` 並切換為上線模式。送審前可先把早期用戶加為 App 的測試人員。
 
-後台「設定」頁會顯示一行 `https://你的網域/auth/facebook/callback`。到 Meta App 的「Facebook 登入 → 設定 → 有效的 OAuth 重新導向 URI」貼上並儲存。這一步 Meta 不允許程式自動做。
+### 2.3 PAYUNi 統一金流
 
-### 2.4 登記 Webhook
+1. 到 [PAYUNi](https://www.payuni.com.tw/) 申請商店，先用**測試區**帳號。
+2. 商店後台「串接資訊」取得 **商店代號（MerID）**、**Hash Key（32 字元）**、**Hash IV（16 字元）**，填到後台「平台設定 → 3. PAYUNi」，勾選測試模式。
+3. 用一個測試用戶帳號到「方案與付款」按購買，會導到 PayUni 測試支付頁，用測試卡號完成付款，回來後方案到期日應該延長、訂單狀態為已付款。
+4. 確認無誤後換成正式區的 MerID / Key / IV，取消勾選測試模式。
 
-後台「設定」頁按 **「自動向 Meta 登記 Webhook」**。成功會顯示 page 與 instagram 都 ok。
+NotifyURL / ReturnURL 會隨每筆交易帶給 PayUni，不需要在 PayUni 後台另外設定。
 
-若失敗（例如網址還沒對外開放），也可以手動：Meta App → Messenger → 設定 → Webhooks，填後台顯示的回呼網址與驗證權杖，訂閱 `messages`、`messaging_postbacks`、`messaging_referrals`、`messaging_optins`。
+### 2.4 方案與試用
 
-### 2.5 連接粉絲專頁
-
-後台「頻道」頁按 **「用 Facebook 登入連接粉絲專頁」** → 授權 → 勾選專頁 → 連接。系統會自動：
-
-- 儲存永久有效的專頁存取權杖
-- 讓 App 訂閱該專頁的 Webhook 事件
-- 設定 Messenger「開始使用」按鈕（新用戶從廣告點進來會先看到它，按下去才會觸發自動化）
-- 連接該專頁綁定的 Instagram 專業帳號
-
-### 2.6 建立自動化
-
-後台「自動化」→ **「⚡ 快速建立：廣告點擊 → 導購」**，把按鈕網址改成你要導去的頁面，儲存。到「模擬測試」頁填一個廣告 ID 執行，就能看到會送什麼。
-
-### 2.7 投廣告
-
-廣告管理員：行銷活動目標選 **互動 → 訊息**（Click to Messenger / Instagram Direct）。廣告層級「訊息範本 → 進階 → ref 參數」可填代碼（例如 `spring_sale`）讓不同廣告走不同自動化；不填也會帶 `ad_id`，用「任何廣告點擊」或「指定廣告 ID」即可。
-
-> **App 還在開發模式時**只有 App 的管理員 / 開發者 / 測試人員收得到回覆。要對所有人生效，需送審 `pages_messaging`（Instagram 另需 `instagram_manage_messages`）並切換為上線模式。
+「平台設定 → 4. 方案」可改名稱、價格、月數、上下架，預設有月繳 990 / 年繳 9900。「1. 基本」可改試用天數與是否開放註冊。
 
 ---
 
-## 3. 觸發條件
+## 3. 用戶怎麼用
+
+1. 註冊 → 進入試用期。
+2. 「頻道」→「用 Facebook 登入連接粉絲專頁」→ 勾選專頁 → 系統自動儲存權杖、訂閱 Webhook、設定開始使用按鈕、連接綁定的 IG。
+3. 「自動化」→「快速建立：廣告點擊 → 導購」，改成自己的網址，儲存。
+4. 「模擬測試」確認規則命中。
+5. 廣告管理員建立 **互動 → 訊息** 目標的廣告；想分流用 ref 參數或廣告 ID。
+6. 試用到期前到「方案與付款」購買；到期後 Webhook 事件照收、聯絡人照記，但自動回覆暫停，付款後立即恢復。
+
+### 觸發條件
 
 | 類型 | 何時觸發 | 條件值 |
 | --- | --- | --- |
@@ -127,52 +109,34 @@ npm start          # 預設 3000 埠，資料存 ./data/app.db
 | 開始使用 | 新用戶按「開始使用」且非廣告來源 | 不需 |
 | 預設回覆 | 都沒命中的一般訊息 | 不需 |
 
-比對順序：按鈕 payload → 廣告 ID → ref → 任何廣告 → 開始使用 → 關鍵字 → 預設；同一層以「優先度」大者優先。
-
-**串多步驟流程**：按鈕改成「回傳 payload」（例如 `WANT_PRICE`），再建一條「按鈕 payload = WANT_PRICE」的自動化即可分支。
-
-**可用變數**：`{{first_name}}` `{{last_name}}` `{{full_name}}` `{{ad_id}}` `{{ref}}` `{{message}}` `{{psid}}`
+比對順序：按鈕 payload → 廣告 ID → ref → 任何廣告 → 開始使用 → 關鍵字 → 預設；同一層以優先度大者優先。可用變數：`{{first_name}}` `{{last_name}}` `{{full_name}}` `{{ad_id}}` `{{ref}}` `{{message}}` `{{psid}}`。
 
 ---
 
 ## 4. API
 
-所有 `/api/*` 需登入 Cookie，或 header `Authorization: Bearer <後台密碼>`。
+`/api/*` 需登入 Cookie，或 `Authorization: Basic base64(email:password)`。
 
 | 方法 | 路徑 | 說明 |
 | --- | --- | --- |
-| GET | `/api/overview` | 統計與設定狀態 |
-| GET/POST | `/api/settings` | 讀取 / 更新 Meta App 等設定 |
-| POST | `/api/webhook/register` | 向 Meta 登記 Webhook |
-| GET | `/api/facebook/pending/:id` | OAuth 後可連接的專頁清單 |
-| POST | `/api/facebook/connect` | 連接選取的專頁 |
+| POST | `/api/auth/signup`、`/login`、`/logout`、`/password` | 帳號 |
+| GET | `/api/auth/me` | 目前使用者與方案狀態 |
+| GET | `/api/overview` | 統計 |
+| GET | `/api/billing` | 方案狀態、可購買方案、付款記錄 |
+| POST | `/api/billing/checkout` | 建立訂單，回傳 PayUni UPP 表單 |
+| GET/POST/DELETE | `/api/billing/plans` | 方案管理（擁有者） |
+| POST | `/api/billing/grant` | 手動延長（擁有者） |
+| GET | `/api/billing/orders/all` | 全部訂單（擁有者） |
+| GET/POST | `/api/settings` | 平台設定（擁有者） |
+| POST | `/api/webhook/register` | 向 Meta 登記 Webhook（擁有者） |
+| GET | `/api/users` | 用戶列表（擁有者） |
+| GET | `/api/facebook/pending/:id`、POST `/api/facebook/connect` | Facebook 連接 |
 | GET/POST/DELETE | `/api/channels` | 頻道 |
-| POST | `/api/channels/:id/subscribe` | 重新訂閱 Webhook + 設定開始使用 |
-| GET/POST | `/api/automations` | 自動化列表 / 新增 |
-| PUT/DELETE | `/api/automations/:id` | 更新 / 刪除 |
-| PATCH | `/api/automations/:id/enabled` | 啟用 / 停用 |
-| POST | `/api/simulate` | 模擬事件（不真的送出） |
-| POST | `/api/replay-webhook` | 把 Meta 的原始 webhook JSON 重跑一次 |
-| GET | `/api/contacts`、`/api/contacts/:id` | 聯絡人 |
-| POST | `/api/contacts/:id/send` | 手動發訊息（24 小時窗口內） |
-| GET | `/api/events`、`/api/links` | 事件記錄、追蹤連結 |
+| GET/POST/PUT/PATCH/DELETE | `/api/automations` | 自動化 |
+| POST | `/api/simulate` | 模擬 |
+| GET | `/api/contacts`、`/api/events`、`/api/links` | 聯絡人、記錄、追蹤連結 |
 
-自動化 JSON 範例：
-
-```json
-{
-  "name": "春季廣告",
-  "trigger_type": "ref",
-  "trigger_value": "spring_sale",
-  "priority": 10,
-  "steps": [
-    { "type": "text", "text": "{{first_name}} 你好！" },
-    { "type": "buttons", "text": "點下方按鈕看活動",
-      "buttons": [{ "type": "url", "title": "看活動", "url": "https://example.com/spring", "track": true }] },
-    { "type": "tag", "tag": "spring" }
-  ]
-}
-```
+公開端點：`/webhook`（Meta）、`/payuni/notify`、`/payuni/return`（PayUni）、`/r/:slug`（追蹤轉址）、`/auth/facebook`（OAuth）。
 
 ---
 
@@ -180,49 +144,41 @@ npm start          # 預設 3000 埠，資料存 ./data/app.db
 
 ```
 src/
-  index.ts          啟動入口
-  app.ts            Express 組裝
-  config.ts         啟動前的環境變數（只有 PORT、DATABASE_PATH）
-  settings.ts       存在資料庫的設定、密碼雜湊、對外網址推算
-  db.ts             SQLite schema 與資料存取
+  index.ts / app.ts / config.ts     啟動、Express 組裝、環境變數
+  settings.ts                       平台設定（存資料庫）、密碼雜湊、對外網址
+  db.ts                             SQLite schema 與資料存取（users / plans / orders / channels / ...）
+  types.ts
+  billing/
+    payuni.ts                       PayUni 加解密、UPP 表單、回呼驗章
+    subscription.ts                 試用 / 付費 / 到期判斷、付款後延長
   meta/
-    parser.ts       Webhook payload 正規化（抽出 referral / ad_id / ref）
-    graph.ts        OAuth、列專頁、訂閱 Webhook、messenger_profile
-    sendApi.ts      Graph API 發送訊息 / 取得個人資料
-    signature.ts    X-Hub-Signature-256 驗證
+    parser.ts                       Webhook 正規化（抽出 referral / ad_id / ref）
+    graph.ts                        OAuth、列專頁、訂閱 Webhook、messenger_profile
+    sendApi.ts / signature.ts       發訊息、簽章驗證
   engine/
-    matcher.ts      決定事件要跑哪條自動化
-    runner.ts       執行步驟、產生追蹤連結
-    templates.ts    {{變數}} 替換
-    handler.ts      完整處理流程（聯絡人 → 比對 → 執行）
+    matcher.ts / runner.ts / handler.ts / templates.ts
   routes/
-    webhook.ts      /webhook
-    facebook.ts     /auth/facebook 登入流程
-    redirect.ts     /r/:slug 追蹤轉址
-    auth.ts         後台登入 / 首次設定
-    api.ts          後台 REST API
-  public/           後台網頁（純 HTML/JS，無建置）
-test/               vitest 測試
+    auth.ts                         註冊登入、角色
+    billing.ts                      /api/billing、/payuni/notify、/payuni/return
+    facebook.ts / webhook.ts / redirect.ts / api.ts
+  public/                           後台網頁（純 HTML/JS，無建置）
+test/                               vitest（37 項：解析、比對、PayUni 加解密、多用戶端到端）
 ```
 
 ```bash
-npm test          # 跑測試
-npm run typecheck # 型別檢查
+npm test && npm run typecheck
 ```
 
 ---
 
 ## 6. 常見問題
 
-**點了廣告沒有回覆？** 到後台「記錄」頁看：
+**付款成功但方案沒延長？** 到「記錄」看全平台事件：「找不到訂單」代表 MerTradeNo 對不上；「金額不符」代表方案價格在付款途中被改；「驗章失敗」代表 Hash Key / IV 填錯或測試區與正式區混用。
 
-- 「收到未設定頻道的事件」→ 該專頁 / IG 帳號還沒連接，到「頻道」頁連接。
-- 「Webhook 簽章驗證失敗」→ App Secret 填錯。
-- 「Webhook 驗證失敗：verify token 不符」→ Meta 後台的驗證權杖跟設定頁不一樣，重新登記 Webhook。
-- 有 `referral` 事件但沒有「觸發自動化」→ 沒有規則命中，用「模擬測試」檢查。
-- 「步驟送出失敗」→ 通常是權杖過期或權限不足，到「頻道」頁重新連接。
-- 什麼都沒有 → Webhook 沒登記到這個 App，或專頁沒訂閱（頻道頁按「重新訂閱」）。
+**用戶點了廣告沒有回覆？** 用戶的「記錄」頁會寫原因：未連接頻道、方案已到期、權杖過期、沒有規則命中。擁有者在「記錄 → 看全平台」能看到未連接頻道的事件。
 
-**Facebook 登入後說「沒有可管理的粉絲專頁」？** 授權時 Meta 會問要分享哪些專頁，請確認有勾選。
+**App 在開發模式** 只有 App 的管理員 / 開發者 / 測試人員能收到回覆，正式營運必須送審。
 
-**24 小時規則**：Meta 只允許在使用者最後一次互動後 24 小時內主動發訊息。廣告點擊觸發的回覆一定在窗口內；後台「手動發送」超過 24 小時會失敗。
+**24 小時規則**：Meta 只允許在使用者最後一次互動後 24 小時內主動發訊息。廣告點擊觸發的回覆一定在窗口內。
+
+**自動扣款（定期定額）**：目前是「買 N 個月、到期前手動續約」，後台會在到期前 7 天提醒。PayUni 的信用卡約定（Token）定期扣款可以之後再加。

@@ -7,30 +7,45 @@
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <div id="setup" class="login hidden">
-    <form id="setup-form" class="card login-card">
-      <h1>歡迎使用 Lakeze Go 🚀</h1>
-      <p class="muted">第一次使用，請先設定後台管理員密碼（至少 8 個字元）。</p>
-      <input type="password" id="setup-password" placeholder="設定密碼" autocomplete="new-password" />
-      <input type="password" id="setup-password2" placeholder="再輸入一次" autocomplete="new-password" />
-      <button class="btn primary" type="submit">建立並登入</button>
-      <p id="setup-error" class="error"></p>
-    </form>
-  </div>
-
-  <div id="login" class="login hidden">
-    <form id="login-form" class="card login-card">
-      <h1>Lakeze Go</h1>
-      <p class="muted">請輸入後台密碼</p>
-      <input type="password" id="login-password" placeholder="密碼" autocomplete="current-password" />
-      <button class="btn primary" type="submit">登入</button>
-      <p id="login-error" class="error"></p>
-    </form>
+  <div id="gate" class="login hidden">
+    <div class="gate-wrap">
+      <div class="hero">
+        <div class="brand" style="font-size:24px">⚡ <span id="gate-app-name">Lakeze Go</span></div>
+        <h1>Meta 廣告點進來，<br/>秒回覆、直接帶去你的頁面。</h1>
+        <p class="muted">用 Facebook 登入連接粉絲專頁與 Instagram，設定「廣告點擊 → 自動回覆 + 導購按鈕」，追蹤每一次點擊。</p>
+        <ul class="hero-list">
+          <li>✅ Click to Messenger / Instagram 廣告自動接待</li>
+          <li>✅ 指定廣告、ref 參數、關鍵字多種觸發</li>
+          <li>✅ 導購連結點擊追蹤、聯絡人來源記錄</li>
+          <li>✅ <span id="gate-trial">免費試用 14 天</span></li>
+        </ul>
+      </div>
+      <div class="card login-card">
+        <div class="tabs">
+          <button class="tab active" data-tab="login">登入</button>
+          <button class="tab" data-tab="signup" id="tab-signup">註冊</button>
+        </div>
+        <form id="login-form" class="gate-form">
+          <input type="email" id="login-email" placeholder="Email" autocomplete="email" />
+          <input type="password" id="login-password" placeholder="密碼" autocomplete="current-password" />
+          <button class="btn primary" type="submit">登入</button>
+          <p id="login-error" class="error"></p>
+        </form>
+        <form id="signup-form" class="gate-form hidden">
+          <p id="signup-first" class="hint hidden">你是第一位註冊者，將成為此平台的擁有者（管理員）。</p>
+          <input type="text" id="signup-name" placeholder="你的名字 / 品牌名" />
+          <input type="email" id="signup-email" placeholder="Email" autocomplete="email" />
+          <input type="password" id="signup-password" placeholder="密碼（至少 8 字元）" autocomplete="new-password" />
+          <button class="btn primary" type="submit">建立帳號</button>
+          <p id="signup-error" class="error"></p>
+        </form>
+      </div>
+    </div>
   </div>
 
   <div id="shell" class="hidden">
     <header class="topbar">
-      <div class="brand">⚡ Lakeze Go</div>
+      <div class="brand">⚡ <span class="app-name">Lakeze Go</span></div>
       <nav id="nav">
         <a href="#overview">總覽</a>
         <a href="#automations">自動化</a>
@@ -38,10 +53,13 @@
         <a href="#events">記錄</a>
         <a href="#channels">頻道</a>
         <a href="#simulate">模擬測試</a>
-        <a href="#settings">設定</a>
+        <a href="#billing">方案與付款</a>
+        <a href="#settings" class="owner-only hidden">平台設定</a>
       </nav>
+      <span id="who" class="muted small"></span>
       <button id="logout" class="btn ghost small">登出</button>
     </header>
+    <div id="banner" class="banner hidden"></div>
     <main id="view" class="container"></main>
   </div>
 

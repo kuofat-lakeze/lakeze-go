@@ -6,8 +6,47 @@ import type { Automation, Channel, Contact, Step } from "./types.js";
 export type DB = DatabaseSync;
 
 const SCHEMA = `
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL DEFAULT '',
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'member',
+  trial_until TEXT,
+  paid_until TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS plans (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  price INTEGER NOT NULL,
+  months INTEGER NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  sort INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_no TEXT NOT NULL UNIQUE,
+  user_id INTEGER NOT NULL,
+  plan_id INTEGER,
+  plan_name TEXT NOT NULL,
+  amount INTEGER NOT NULL,
+  months INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  payuni_trade_no TEXT,
+  payment_type TEXT,
+  paid_at TEXT,
+  raw TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id, id DESC);
+
 CREATE TABLE IF NOT EXISTS channels (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
   platform TEXT NOT NULL,
   external_id TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
@@ -18,6 +57,7 @@ CREATE TABLE IF NOT EXISTS channels (
 
 CREATE TABLE IF NOT EXISTS automations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
   name TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1,
   priority INTEGER NOT NULL DEFAULT 0,
@@ -30,9 +70,11 @@ CREATE TABLE IF NOT EXISTS automations (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_automations_user ON automations(user_id);
 
 CREATE TABLE IF NOT EXISTS contacts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
   channel_id INTEGER NOT NULL,
   platform TEXT NOT NULL,
   psid TEXT NOT NULL,
@@ -47,9 +89,11 @@ CREATE TABLE IF NOT EXISTS contacts (
   last_seen TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(channel_id, psid)
 );
+CREATE INDEX IF NOT EXISTS idx_contacts_user ON contacts(user_id, last_seen DESC);
 
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER,
   channel_id INTEGER,
   contact_id INTEGER,
   automation_id INTEGER,
@@ -58,10 +102,11 @@ CREATE TABLE IF NOT EXISTS events (
   payload TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_events_user ON events(user_id, id DESC);
 
 CREATE TABLE IF NOT EXISTS links (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
   slug TEXT NOT NULL UNIQUE,
   url TEXT NOT NULL,
   automation_id INTEGER,
@@ -100,15 +145,6 @@ export function openDb(path: string): DB {
 
 type Row = Record<string, unknown>;
 
-function rowToAutomation(r: Row): Automation {
-  return {
-    ...(r as unknown as Automation),
-    steps: safeJson<Step[]>(r.steps as string, []),
-  };
-}
-function rowToContact(r: Row): Contact {
-  return { ...(r as unknown as Contact), tags: safeJson<string[]>(r.tags as string, []) };
-}
 function safeJson<T>(s: string | null | undefined, fallback: T): T {
   if (!s) return fallback;
   try {
@@ -117,32 +153,176 @@ function safeJson<T>(s: string | null | undefined, fallback: T): T {
     return fallback;
   }
 }
+function rowToAutomation(r: Row): Automation {
+  return { ...(r as unknown as Automation), steps: safeJson<Step[]>(r.steps as string, []) };
+}
+function rowToContact(r: Row): Contact {
+  return { ...(r as unknown as Contact), tags: safeJson<string[]>(r.tags as string, []) };
+}
+
+/* ---------- users ---------- */
+export type UserRole = "owner" | "member";
+export interface User {
+  id: number;
+  email: string;
+  name: string;
+  password_hash: string;
+  role: UserRole;
+  trial_until: string | null; // ISO
+  paid_until: string | null; // ISO
+  created_at: string;
+}
+export const users = {
+  count(db: DB): number {
+    return Number((db.prepare("SELECT COUNT(*) n FROM users").get() as Row).n);
+  },
+  get(db: DB, id: number): User | undefined {
+    return db.prepare("SELECT * FROM users WHERE id = ?").get(id) as unknown as User | undefined;
+  },
+  byEmail(db: DB, email: string): User | undefined {
+    return db.prepare("SELECT * FROM users WHERE email = ?").get(email.toLowerCase().trim()) as unknown as User | undefined;
+  },
+  list(db: DB): User[] {
+    return db.prepare("SELECT * FROM users ORDER BY id").all() as unknown as User[];
+  },
+  create(db: DB, u: { email: string; name: string; password_hash: string; role: UserRole; trial_until: string | null }): User {
+    const res = db
+      .prepare("INSERT INTO users (email, name, password_hash, role, trial_until) VALUES (?, ?, ?, ?, ?)")
+      .run(u.email.toLowerCase().trim(), u.name, u.password_hash, u.role, u.trial_until);
+    return users.get(db, Number(res.lastInsertRowid))!;
+  },
+  setPassword(db: DB, id: number, hash: string) {
+    db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hash, id);
+  },
+  setPaidUntil(db: DB, id: number, iso: string) {
+    db.prepare("UPDATE users SET paid_until = ? WHERE id = ?").run(iso, id);
+  },
+  setTrialUntil(db: DB, id: number, iso: string | null) {
+    db.prepare("UPDATE users SET trial_until = ? WHERE id = ?").run(iso, id);
+  },
+  setRole(db: DB, id: number, role: UserRole) {
+    db.prepare("UPDATE users SET role = ? WHERE id = ?").run(role, id);
+  },
+};
+
+/* ---------- plans ---------- */
+export interface Plan {
+  id: number;
+  code: string;
+  name: string;
+  price: number;
+  months: number;
+  active: number;
+  sort: number;
+}
+export const plans = {
+  list(db: DB, activeOnly = false): Plan[] {
+    return db
+      .prepare(`SELECT * FROM plans ${activeOnly ? "WHERE active = 1" : ""} ORDER BY sort, id`)
+      .all() as unknown as Plan[];
+  },
+  get(db: DB, id: number): Plan | undefined {
+    return db.prepare("SELECT * FROM plans WHERE id = ?").get(id) as unknown as Plan | undefined;
+  },
+  upsert(db: DB, p: Omit<Plan, "id"> & { id?: number }): Plan {
+    if (p.id) {
+      db.prepare("UPDATE plans SET code = ?, name = ?, price = ?, months = ?, active = ?, sort = ? WHERE id = ?").run(
+        p.code,
+        p.name,
+        p.price,
+        p.months,
+        p.active ? 1 : 0,
+        p.sort,
+        p.id,
+      );
+      return plans.get(db, p.id)!;
+    }
+    const res = db
+      .prepare("INSERT INTO plans (code, name, price, months, active, sort) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(p.code, p.name, p.price, p.months, p.active ? 1 : 0, p.sort);
+    return plans.get(db, Number(res.lastInsertRowid))!;
+  },
+  remove(db: DB, id: number) {
+    db.prepare("DELETE FROM plans WHERE id = ?").run(id);
+  },
+  seedDefaults(db: DB) {
+    if (plans.list(db).length > 0) return;
+    plans.upsert(db, { code: "monthly", name: "月繳方案", price: 990, months: 1, active: 1, sort: 1 });
+    plans.upsert(db, { code: "yearly", name: "年繳方案（省兩個月）", price: 9900, months: 12, active: 1, sort: 2 });
+  },
+};
+
+/* ---------- orders ---------- */
+export type OrderStatus = "pending" | "paid" | "failed";
+export interface Order {
+  id: number;
+  order_no: string;
+  user_id: number;
+  plan_id: number | null;
+  plan_name: string;
+  amount: number;
+  months: number;
+  status: OrderStatus;
+  payuni_trade_no: string | null;
+  payment_type: string | null;
+  paid_at: string | null;
+  raw: string | null;
+  created_at: string;
+}
+export const orders = {
+  create(db: DB, o: { order_no: string; user_id: number; plan_id: number | null; plan_name: string; amount: number; months: number }): Order {
+    const res = db
+      .prepare("INSERT INTO orders (order_no, user_id, plan_id, plan_name, amount, months) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(o.order_no, o.user_id, o.plan_id, o.plan_name, o.amount, o.months);
+    return orders.get(db, Number(res.lastInsertRowid))!;
+  },
+  get(db: DB, id: number): Order | undefined {
+    return db.prepare("SELECT * FROM orders WHERE id = ?").get(id) as unknown as Order | undefined;
+  },
+  byOrderNo(db: DB, orderNo: string): Order | undefined {
+    return db.prepare("SELECT * FROM orders WHERE order_no = ?").get(orderNo) as unknown as Order | undefined;
+  },
+  listForUser(db: DB, userId: number, limit = 50): Order[] {
+    return db.prepare("SELECT * FROM orders WHERE user_id = ? ORDER BY id DESC LIMIT ?").all(userId, limit) as unknown as Order[];
+  },
+  listAll(db: DB, limit = 200): (Order & { email: string })[] {
+    return db
+      .prepare("SELECT o.*, u.email FROM orders o LEFT JOIN users u ON u.id = o.user_id ORDER BY o.id DESC LIMIT ?")
+      .all(limit) as unknown as (Order & { email: string })[];
+  },
+  markPaid(db: DB, id: number, info: { payuni_trade_no: string | null; payment_type: string | null; raw: unknown }) {
+    db.prepare(
+      "UPDATE orders SET status = 'paid', payuni_trade_no = ?, payment_type = ?, paid_at = datetime('now'), raw = ? WHERE id = ?",
+    ).run(info.payuni_trade_no, info.payment_type, JSON.stringify(info.raw), id);
+  },
+  markFailed(db: DB, id: number, raw: unknown) {
+    db.prepare("UPDATE orders SET status = 'failed', raw = ? WHERE id = ? AND status = 'pending'").run(JSON.stringify(raw), id);
+  },
+};
 
 /* ---------- channels ---------- */
 export const channels = {
-  list(db: DB): Channel[] {
-    return db.prepare("SELECT * FROM channels ORDER BY id").all() as unknown as Channel[];
+  list(db: DB, userId: number): Channel[] {
+    return db.prepare("SELECT * FROM channels WHERE user_id = ? ORDER BY id").all(userId) as unknown as Channel[];
   },
   get(db: DB, id: number): Channel | undefined {
     return db.prepare("SELECT * FROM channels WHERE id = ?").get(id) as unknown as Channel | undefined;
   },
   byExternalId(db: DB, externalId: string): Channel | undefined {
-    return db.prepare("SELECT * FROM channels WHERE external_id = ?").get(externalId) as unknown as
-      | Channel
-      | undefined;
+    return db.prepare("SELECT * FROM channels WHERE external_id = ?").get(externalId) as unknown as Channel | undefined;
   },
   upsert(db: DB, c: Omit<Channel, "id" | "created_at">): Channel {
     db.prepare(
-      `INSERT INTO channels (platform, external_id, name, access_token, instagram_login)
-       VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO channels (user_id, platform, external_id, name, access_token, instagram_login)
+       VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(external_id) DO UPDATE SET
-         platform = excluded.platform, name = excluded.name,
+         user_id = excluded.user_id, platform = excluded.platform, name = excluded.name,
          access_token = excluded.access_token, instagram_login = excluded.instagram_login`,
-    ).run(c.platform, c.external_id, c.name, c.access_token, c.instagram_login ? 1 : 0);
+    ).run(c.user_id, c.platform, c.external_id, c.name, c.access_token, c.instagram_login ? 1 : 0);
     return channels.byExternalId(db, c.external_id)!;
   },
-  remove(db: DB, id: number) {
-    db.prepare("DELETE FROM channels WHERE id = ?").run(id);
+  remove(db: DB, id: number, userId: number) {
+    db.prepare("DELETE FROM channels WHERE id = ? AND user_id = ?").run(id, userId);
   },
 };
 
@@ -150,57 +330,40 @@ export const channels = {
 export type AutomationInput = Omit<Automation, "id" | "triggered_count" | "created_at" | "updated_at">;
 
 export const automations = {
-  list(db: DB): Automation[] {
-    return (db.prepare("SELECT * FROM automations ORDER BY priority DESC, id DESC").all() as Row[]).map(
+  list(db: DB, userId: number): Automation[] {
+    return (db.prepare("SELECT * FROM automations WHERE user_id = ? ORDER BY priority DESC, id DESC").all(userId) as Row[]).map(
       rowToAutomation,
     );
   },
-  listEnabled(db: DB): Automation[] {
+  listEnabled(db: DB, userId: number): Automation[] {
     return (
-      db.prepare("SELECT * FROM automations WHERE enabled = 1 ORDER BY priority DESC, id DESC").all() as Row[]
+      db.prepare("SELECT * FROM automations WHERE user_id = ? AND enabled = 1 ORDER BY priority DESC, id DESC").all(userId) as Row[]
     ).map(rowToAutomation);
   },
-  get(db: DB, id: number): Automation | undefined {
+  get(db: DB, id: number, userId?: number): Automation | undefined {
     const r = db.prepare("SELECT * FROM automations WHERE id = ?").get(id) as Row | undefined;
-    return r ? rowToAutomation(r) : undefined;
+    if (!r) return undefined;
+    if (userId !== undefined && Number(r.user_id) !== userId) return undefined;
+    return rowToAutomation(r);
   },
   create(db: DB, a: AutomationInput): Automation {
     const res = db
       .prepare(
-        `INSERT INTO automations (name, enabled, priority, platform, channel_id, trigger_type, trigger_value, steps)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO automations (user_id, name, enabled, priority, platform, channel_id, trigger_type, trigger_value, steps)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(
-        a.name,
-        a.enabled ? 1 : 0,
-        a.priority,
-        a.platform,
-        a.channel_id,
-        a.trigger_type,
-        a.trigger_value,
-        JSON.stringify(a.steps),
-      );
+      .run(a.user_id, a.name, a.enabled ? 1 : 0, a.priority, a.platform, a.channel_id, a.trigger_type, a.trigger_value, JSON.stringify(a.steps));
     return automations.get(db, Number(res.lastInsertRowid))!;
   },
   update(db: DB, id: number, a: AutomationInput): Automation | undefined {
     db.prepare(
       `UPDATE automations SET name = ?, enabled = ?, priority = ?, platform = ?, channel_id = ?,
-         trigger_type = ?, trigger_value = ?, steps = ?, updated_at = datetime('now') WHERE id = ?`,
-    ).run(
-      a.name,
-      a.enabled ? 1 : 0,
-      a.priority,
-      a.platform,
-      a.channel_id,
-      a.trigger_type,
-      a.trigger_value,
-      JSON.stringify(a.steps),
-      id,
-    );
-    return automations.get(db, id);
+         trigger_type = ?, trigger_value = ?, steps = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?`,
+    ).run(a.name, a.enabled ? 1 : 0, a.priority, a.platform, a.channel_id, a.trigger_type, a.trigger_value, JSON.stringify(a.steps), id, a.user_id);
+    return automations.get(db, id, a.user_id);
   },
-  remove(db: DB, id: number) {
-    db.prepare("DELETE FROM automations WHERE id = ?").run(id);
+  remove(db: DB, id: number, userId: number) {
+    db.prepare("DELETE FROM automations WHERE id = ? AND user_id = ?").run(id, userId);
   },
   bumpTriggered(db: DB, id: number) {
     db.prepare("UPDATE automations SET triggered_count = triggered_count + 1 WHERE id = ?").run(id);
@@ -209,30 +372,35 @@ export const automations = {
 
 /* ---------- contacts ---------- */
 export const contacts = {
-  list(db: DB, limit = 200): Contact[] {
-    return (db.prepare("SELECT * FROM contacts ORDER BY last_seen DESC LIMIT ?").all(limit) as Row[]).map(
+  list(db: DB, userId: number, limit = 200): Contact[] {
+    return (db.prepare("SELECT * FROM contacts WHERE user_id = ? ORDER BY last_seen DESC LIMIT ?").all(userId, limit) as Row[]).map(
       rowToContact,
     );
   },
-  get(db: DB, id: number): Contact | undefined {
+  get(db: DB, id: number, userId?: number): Contact | undefined {
     const r = db.prepare("SELECT * FROM contacts WHERE id = ?").get(id) as Row | undefined;
-    return r ? rowToContact(r) : undefined;
+    if (!r) return undefined;
+    if (userId !== undefined && Number(r.user_id) !== userId) return undefined;
+    return rowToContact(r);
   },
   find(db: DB, channelId: number, psid: string): Contact | undefined {
-    const r = db.prepare("SELECT * FROM contacts WHERE channel_id = ? AND psid = ?").get(channelId, psid) as
-      | Row
-      | undefined;
+    const r = db.prepare("SELECT * FROM contacts WHERE channel_id = ? AND psid = ?").get(channelId, psid) as Row | undefined;
     return r ? rowToContact(r) : undefined;
   },
   /** 找到或建立聯絡人，並更新 last_seen */
-  touch(db: DB, channelId: number, platform: string, psid: string): { contact: Contact; isNew: boolean } {
-    const existing = contacts.find(db, channelId, psid);
+  touch(db: DB, channel: Channel, psid: string): { contact: Contact; isNew: boolean } {
+    const existing = contacts.find(db, channel.id, psid);
     if (existing) {
       db.prepare("UPDATE contacts SET last_seen = datetime('now') WHERE id = ?").run(existing.id);
       return { contact: existing, isNew: false };
     }
-    db.prepare("INSERT INTO contacts (channel_id, platform, psid) VALUES (?, ?, ?)").run(channelId, platform, psid);
-    return { contact: contacts.find(db, channelId, psid)!, isNew: true };
+    db.prepare("INSERT INTO contacts (user_id, channel_id, platform, psid) VALUES (?, ?, ?, ?)").run(
+      channel.user_id,
+      channel.id,
+      channel.platform,
+      psid,
+    );
+    return { contact: contacts.find(db, channel.id, psid)!, isNew: true };
   },
   setProfile(db: DB, id: number, p: { first_name?: string; last_name?: string; profile_pic?: string }) {
     db.prepare(
@@ -248,18 +416,18 @@ export const contacts = {
   },
   addTag(db: DB, id: number, tag: string) {
     const c = contacts.get(db, id);
-    if (!c) return;
-    if (c.tags.includes(tag)) return;
+    if (!c || c.tags.includes(tag)) return;
     db.prepare("UPDATE contacts SET tags = ? WHERE id = ?").run(JSON.stringify([...c.tags, tag]), id);
   },
-  remove(db: DB, id: number) {
-    db.prepare("DELETE FROM contacts WHERE id = ?").run(id);
+  remove(db: DB, id: number, userId: number) {
+    db.prepare("DELETE FROM contacts WHERE id = ? AND user_id = ?").run(id, userId);
   },
 };
 
 /* ---------- events ---------- */
 export interface EventRow {
   id: number;
+  user_id: number | null;
   channel_id: number | null;
   contact_id: number | null;
   automation_id: number | null;
@@ -271,11 +439,20 @@ export interface EventRow {
 export const events = {
   log(
     db: DB,
-    e: { channel_id?: number | null; contact_id?: number | null; automation_id?: number | null; type: string; summary: string; payload?: unknown },
+    e: {
+      user_id?: number | null;
+      channel_id?: number | null;
+      contact_id?: number | null;
+      automation_id?: number | null;
+      type: string;
+      summary: string;
+      payload?: unknown;
+    },
   ) {
     db.prepare(
-      "INSERT INTO events (channel_id, contact_id, automation_id, type, summary, payload) VALUES (?, ?, ?, ?, ?, ?)",
+      "INSERT INTO events (user_id, channel_id, contact_id, automation_id, type, summary, payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
     ).run(
+      e.user_id ?? null,
       e.channel_id ?? null,
       e.contact_id ?? null,
       e.automation_id ?? null,
@@ -284,15 +461,15 @@ export const events = {
       e.payload === undefined ? null : JSON.stringify(e.payload),
     );
   },
-  list(db: DB, limit = 200): EventRow[] {
-    return db.prepare("SELECT * FROM events ORDER BY id DESC LIMIT ?").all(limit) as unknown as EventRow[];
+  /** 一般用戶看自己的；平台擁有者（userId = null）看全部含系統事件 */
+  list(db: DB, userId: number | null, limit = 200): EventRow[] {
+    if (userId === null) return db.prepare("SELECT * FROM events ORDER BY id DESC LIMIT ?").all(limit) as unknown as EventRow[];
+    return db.prepare("SELECT * FROM events WHERE user_id = ? ORDER BY id DESC LIMIT ?").all(userId, limit) as unknown as EventRow[];
   },
   forContact(db: DB, contactId: number, limit = 100): EventRow[] {
-    return db
-      .prepare("SELECT * FROM events WHERE contact_id = ? ORDER BY id DESC LIMIT ?")
-      .all(contactId, limit) as unknown as EventRow[];
+    return db.prepare("SELECT * FROM events WHERE contact_id = ? ORDER BY id DESC LIMIT ?").all(contactId, limit) as unknown as EventRow[];
   },
-  /** 以 (sender, timestamp, kind) 去重，避免 Meta 重送同一事件時回覆兩次 */
+  /** 以 (channel, sender, timestamp, kind) 去重，避免 Meta 重送同一事件時回覆兩次 */
   markProcessed(db: DB, key: string): boolean {
     try {
       db.prepare("INSERT INTO processed_events (key) VALUES (?)").run(key);
@@ -307,6 +484,7 @@ export const events = {
 /* ---------- links ---------- */
 export interface LinkRow {
   id: number;
+  user_id: number;
   slug: string;
   url: string;
   automation_id: number | null;
@@ -314,28 +492,24 @@ export interface LinkRow {
   created_at: string;
 }
 export const links = {
-  list(db: DB): LinkRow[] {
-    return db.prepare("SELECT * FROM links ORDER BY id DESC").all() as unknown as LinkRow[];
+  list(db: DB, userId: number): LinkRow[] {
+    return db.prepare("SELECT * FROM links WHERE user_id = ? ORDER BY id DESC").all(userId) as unknown as LinkRow[];
   },
   bySlug(db: DB, slug: string): LinkRow | undefined {
     return db.prepare("SELECT * FROM links WHERE slug = ?").get(slug) as unknown as LinkRow | undefined;
   },
   /** 同一個自動化 + 同一個目的網址只建立一個追蹤連結 */
-  ensure(db: DB, url: string, automationId: number | null, slug: string): LinkRow {
-    const existing = db
-      .prepare("SELECT * FROM links WHERE url = ? AND automation_id IS ?")
-      .get(url, automationId) as unknown as LinkRow | undefined;
-    if (existing) return existing;
-    db.prepare("INSERT INTO links (slug, url, automation_id) VALUES (?, ?, ?)").run(slug, url, automationId);
+  ensure(db: DB, userId: number, url: string, automationId: number | null, slug: string): LinkRow {
+    const existing = db.prepare("SELECT * FROM links WHERE url = ? AND automation_id IS ? AND user_id = ?").get(url, automationId, userId) as
+      | unknown
+      | undefined;
+    if (existing) return existing as LinkRow;
+    db.prepare("INSERT INTO links (user_id, slug, url, automation_id) VALUES (?, ?, ?, ?)").run(userId, slug, url, automationId);
     return links.bySlug(db, slug)!;
   },
   recordClick(db: DB, linkId: number, contactId: number | null, userAgent: string | null) {
     db.prepare("UPDATE links SET clicks = clicks + 1 WHERE id = ?").run(linkId);
-    db.prepare("INSERT INTO link_clicks (link_id, contact_id, user_agent) VALUES (?, ?, ?)").run(
-      linkId,
-      contactId,
-      userAgent,
-    );
+    db.prepare("INSERT INTO link_clicks (link_id, contact_id, user_agent) VALUES (?, ?, ?)").run(linkId, contactId, userAgent);
   },
 };
 
@@ -355,16 +529,24 @@ export const settingsStore = {
   },
 };
 
-export function stats(db: DB) {
-  const one = (sql: string, ...args: unknown[]) =>
-    Number((db.prepare(sql).get(...(args as never[])) as Row).n ?? 0);
+export function stats(db: DB, userId: number) {
+  const one = (sql: string) => Number((db.prepare(sql).get(userId) as Row).n ?? 0);
   return {
-    contacts: one("SELECT COUNT(*) n FROM contacts"),
-    contacts_from_ads: one("SELECT COUNT(*) n FROM contacts WHERE source_ad_id IS NOT NULL OR source_ref IS NOT NULL"),
-    contacts_today: one("SELECT COUNT(*) n FROM contacts WHERE first_seen >= date('now')"),
-    automations: one("SELECT COUNT(*) n FROM automations WHERE enabled = 1"),
-    triggered: one("SELECT COALESCE(SUM(triggered_count),0) n FROM automations"),
-    link_clicks: one("SELECT COALESCE(SUM(clicks),0) n FROM links"),
-    events_today: one("SELECT COUNT(*) n FROM events WHERE created_at >= date('now')"),
+    contacts: one("SELECT COUNT(*) n FROM contacts WHERE user_id = ?"),
+    contacts_from_ads: one("SELECT COUNT(*) n FROM contacts WHERE user_id = ? AND (source_ad_id IS NOT NULL OR source_ref IS NOT NULL)"),
+    contacts_today: one("SELECT COUNT(*) n FROM contacts WHERE user_id = ? AND first_seen >= date('now')"),
+    automations: one("SELECT COUNT(*) n FROM automations WHERE user_id = ? AND enabled = 1"),
+    triggered: one("SELECT COALESCE(SUM(triggered_count),0) n FROM automations WHERE user_id = ?"),
+    link_clicks: one("SELECT COALESCE(SUM(clicks),0) n FROM links WHERE user_id = ?"),
+  };
+}
+
+export function platformStats(db: DB) {
+  const one = (sql: string) => Number((db.prepare(sql).get() as Row).n ?? 0);
+  return {
+    users: one("SELECT COUNT(*) n FROM users"),
+    paying_users: one("SELECT COUNT(*) n FROM users WHERE paid_until > strftime('%Y-%m-%dT%H:%M:%fZ','now')"),
+    revenue: one("SELECT COALESCE(SUM(amount),0) n FROM orders WHERE status = 'paid'"),
+    channels: one("SELECT COUNT(*) n FROM channels"),
   };
 }

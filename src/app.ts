@@ -7,7 +7,9 @@ import { webhookRouter } from "./routes/webhook.js";
 import { redirectRouter } from "./routes/redirect.js";
 import { authRouter, requireAuth } from "./routes/auth.js";
 import { facebookRouter } from "./routes/facebook.js";
-import { apiRouter, HttpError } from "./routes/api.js";
+import { apiRouter } from "./routes/api.js";
+import { billingApiRouter, payuniCallbackRouter } from "./routes/billing.js";
+import { HttpError } from "./routes/errors.js";
 
 export interface AppOptions {
   db: DB;
@@ -27,9 +29,11 @@ export function createApp(opts: AppOptions) {
   app.use("/webhook", webhookRouter(db, sender));
   app.use("/r", redirectRouter(db));
   app.use("/auth/facebook", facebookRouter(db, fetchImpl));
+  app.use("/payuni", payuniCallbackRouter(db));
 
   app.use(express.json({ limit: "1mb" }));
   app.use("/api/auth", authRouter(db));
+  app.use("/api/billing", requireAuth(db), billingApiRouter(db));
   app.use("/api", requireAuth(db), apiRouter({ db, sender, fetchImpl }));
 
   app.get("/healthz", (_req, res) => res.json({ ok: true }));

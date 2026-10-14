@@ -9,11 +9,12 @@ export interface RunContext {
   db: DB;
   sender: Sender;
   publicUrl: string;
+  userId: number;
   channel: Channel;
   contact: Contact;
   referral: Referral | null;
   text: string | null;
-  /** 模擬模式：不寫入事件記錄、不累計觸發次數 */
+  /** 模擬模式：不寫入事件記錄、不累計觸發次數、不建立追蹤連結 */
   dryRun?: boolean;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -23,10 +24,11 @@ const MAX_DELAY_SECONDS = 15;
 
 /** 執行一條自動化的所有步驟 */
 export async function runAutomation(automation: Automation, ctx: RunContext, depth = 0): Promise<void> {
-  const { db, sender, channel, contact } = ctx;
+  const { db, channel, contact } = ctx;
   if (!ctx.dryRun) {
     automations.bumpTriggered(db, automation.id);
     events.log(db, {
+      user_id: ctx.userId,
       channel_id: channel.id,
       contact_id: contact.id,
       automation_id: automation.id,
@@ -42,6 +44,7 @@ export async function runAutomation(automation: Automation, ctx: RunContext, dep
       const msg = err instanceof Error ? err.message : String(err);
       if (!ctx.dryRun) {
         events.log(db, {
+          user_id: ctx.userId,
           channel_id: channel.id,
           contact_id: contact.id,
           automation_id: automation.id,
@@ -64,6 +67,7 @@ async function runStep(step: Step, automation: Automation, ctx: RunContext, dept
     await sender.send(channel, contact.psid, message);
     if (!ctx.dryRun) {
       events.log(db, {
+        user_id: ctx.userId,
         channel_id: channel.id,
         contact_id: contact.id,
         automation_id: automation.id,
@@ -82,12 +86,7 @@ async function runStep(step: Step, automation: Automation, ctx: RunContext, dept
     case "buttons": {
       const buttons = step.buttons.slice(0, 3).map((b) => buildButton(b, automation, ctx));
       await deliver(
-        {
-          attachment: {
-            type: "template",
-            payload: { template_type: "button", text: render(step.text), buttons },
-          },
-        },
+        { attachment: { type: "template", payload: { template_type: "button", text: render(step.text), buttons } } },
         `送出按鈕訊息：${truncate(render(step.text))}`,
       );
       return;
@@ -97,21 +96,14 @@ async function runStep(step: Step, automation: Automation, ctx: RunContext, dept
       await deliver(
         {
           text: render(step.text),
-          quick_replies: step.replies.slice(0, 13).map((r) => ({
-            content_type: "text",
-            title: render(r.title).slice(0, 20),
-            payload: r.payload,
-          })),
+          quick_replies: step.replies.slice(0, 13).map((r) => ({ content_type: "text", title: render(r.title).slice(0, 20), payload: r.payload })),
         },
         `送出快速回覆：${truncate(render(step.text))}`,
       );
       return;
 
     case "image":
-      await deliver(
-        { attachment: { type: "image", payload: { url: step.url, is_reusable: true } } },
-        `送出圖片：${step.url}`,
-      );
+      await deliver({ attachment: { type: "image", payload: { url: step.url, is_reusable: true } } }, `送出圖片：${step.url}`);
       return;
 
     case "delay": {
@@ -126,7 +118,7 @@ async function runStep(step: Step, automation: Automation, ctx: RunContext, dept
 
     case "goto": {
       if (depth >= MAX_GOTO_DEPTH) return;
-      const next = automations.get(db, step.automation_id);
+      const next = automations.get(db, step.automation_id, ctx.userId);
       if (!next || !next.enabled) return;
       await runAutomation(next, ctx, depth + 1);
       return;
@@ -140,9 +132,11 @@ function buildButton(b: Button, automation: Automation, ctx: RunContext) {
   if (b.type === "postback") return { type: "postback", title, payload: b.payload };
 
   let url = renderTemplate(b.url, tctx);
-  if (b.track !== false) {
-    const link = links.ensure(ctx.db, url, automation.id, randomSlug());
+  if (b.track !== false && !ctx.dryRun) {
+    const link = links.ensure(ctx.db, ctx.userId, url, automation.id, randomSlug());
     url = `${ctx.publicUrl}/r/${link.slug}?c=${ctx.contact.id}`;
+  } else if (b.track !== false) {
+    url = `${ctx.publicUrl}/r/模擬?c=0`;
   }
   return { type: "web_url", title, url };
 }
@@ -150,9 +144,7 @@ function buildButton(b: Button, automation: Automation, ctx: RunContext) {
 function randomSlug(): string {
   return randomBytes(5).toString("base64url");
 }
-
 function truncate(s: string, n = 60): string {
   return s.length > n ? s.slice(0, n) + "…" : s;
 }
-
 const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));

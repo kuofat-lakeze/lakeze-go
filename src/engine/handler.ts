@@ -1,10 +1,11 @@
 import type { IncomingEvent } from "../types.js";
 import type { DB } from "../db.js";
-import { automations, channels, contacts, events } from "../db.js";
+import { automations, channels, contacts, events, users } from "../db.js";
 import type { Sender } from "../meta/sendApi.js";
 import { isFromAd } from "../meta/parser.js";
 import { matchAutomation } from "./matcher.js";
 import { runAutomation } from "./runner.js";
+import { subscriptionStatus } from "../billing/subscription.js";
 
 export interface HandlerDeps {
   db: DB;
@@ -12,7 +13,7 @@ export interface HandlerDeps {
   publicUrl: string;
 }
 
-/** 處理一個正規化後的 Webhook 事件：建立聯絡人 → 比對規則 → 執行 */
+/** 處理一個正規化後的 Webhook 事件：找頻道與其擁有者 → 建立聯絡人 → 比對規則 → 執行 */
 export async function handleIncomingEvent(event: IncomingEvent, deps: HandlerDeps): Promise<void> {
   const { db, sender, publicUrl } = deps;
 
@@ -20,17 +21,19 @@ export async function handleIncomingEvent(event: IncomingEvent, deps: HandlerDep
   if (!channel) {
     events.log(db, {
       type: "warning",
-      summary: `收到未設定頻道的事件（${event.platform} ${event.channel_external_id}），請到「頻道」頁新增`,
+      summary: `收到未連接頻道的事件（${event.platform} ${event.channel_external_id}）`,
       payload: event.raw,
     });
     return;
   }
+  const owner = users.get(db, channel.user_id);
+  if (!owner) return;
 
   // 去重：Meta 可能重送同一事件
   const dedupeKey = `${channel.id}:${event.sender_id}:${event.timestamp}:${event.kind}`;
   if (!events.markProcessed(db, dedupeKey)) return;
 
-  const { contact, isNew } = contacts.touch(db, channel.id, event.platform, event.sender_id);
+  const { contact, isNew } = contacts.touch(db, channel, event.sender_id);
 
   if (isNew || !contact.first_name) {
     const profile = await sender.getProfile(channel, event.sender_id);
@@ -39,6 +42,7 @@ export async function handleIncomingEvent(event: IncomingEvent, deps: HandlerDep
 
   const fromAd = isFromAd(event.referral);
   events.log(db, {
+    user_id: owner.id,
     channel_id: channel.id,
     contact_id: contact.id,
     type: event.kind,
@@ -46,7 +50,7 @@ export async function handleIncomingEvent(event: IncomingEvent, deps: HandlerDep
     payload: event.raw,
   });
 
-  const match = matchAutomation(event, automations.listEnabled(db), channel.id);
+  const match = matchAutomation(event, automations.listEnabled(db, owner.id), channel.id);
 
   if (event.referral && (fromAd || event.referral.ref)) {
     contacts.setSource(db, contact.id, {
@@ -58,12 +62,26 @@ export async function handleIncomingEvent(event: IncomingEvent, deps: HandlerDep
 
   if (!match) return;
 
+  const sub = subscriptionStatus(owner);
+  if (!sub.active) {
+    events.log(db, {
+      user_id: owner.id,
+      channel_id: channel.id,
+      contact_id: contact.id,
+      automation_id: match.id,
+      type: "warning",
+      summary: `方案已到期，未執行自動化「${match.name}」。請到「方案與付款」續約。`,
+    });
+    return;
+  }
+
   const fresh = contacts.get(db, contact.id) ?? contact;
   try {
     await runAutomation(match, {
       db,
       sender,
       publicUrl,
+      userId: owner.id,
       channel,
       contact: fresh,
       referral: event.referral,

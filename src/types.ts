@@ -2,6 +2,8 @@ export type Platform = "messenger" | "instagram";
 
 export interface Channel {
   id: number;
+  /** 擁有這個頻道的使用者 */
+  user_id: number;
   platform: Platform;
   /** Messenger: 粉絲專頁 ID；Instagram: IG 專業帳號 ID（Webhook entry.id 會對到這個值） */
   external_id: string;
@@ -46,6 +48,7 @@ export type Step =
 
 export interface Automation {
   id: number;
+  user_id: number;
   name: string;
   enabled: number;
   priority: number;
@@ -62,6 +65,7 @@ export interface Automation {
 
 export interface Contact {
   id: number;
+  user_id: number;
   channel_id: number;
   platform: Platform;
   psid: string;

@@ -2,12 +2,18 @@
 (() => {
   const $ = (sel, root = document) => root.querySelector(sel);
   const view = $("#view");
-  const state = { automations: [], channels: [], editing: null };
+  const state = { me: null, automations: [], channels: [], editing: null };
 
   /* ---------- 小工具 ---------- */
   const esc = (s) =>
     String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-  const fmtTime = (s) => (s ? new Date(s.replace(" ", "T") + "Z").toLocaleString("zh-TW", { hour12: false }) : "");
+  const fmtTime = (s) => {
+    if (!s) return "";
+    const d = s.includes("T") ? new Date(s) : new Date(s.replace(" ", "T") + "Z");
+    return d.toLocaleString("zh-TW", { hour12: false });
+  };
+  const fmtDate = (s) => (s ? new Date(s).toLocaleDateString("zh-TW") : "");
+  const money = (n) => `NT$${Number(n).toLocaleString("zh-TW")}`;
   let toastTimer;
   function toast(msg, isErr = false) {
     const t = $("#toast");
@@ -23,7 +29,7 @@
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     });
     if (res.status === 401 && !path.startsWith("/auth")) {
-      showScreen("login");
+      showGate();
       throw new Error("未登入");
     }
     const data = await res.json().catch(() => ({}));
@@ -36,52 +42,82 @@
     if (!c) return;
     navigator.clipboard?.writeText(c.dataset.copy).then(() => toast("已複製"));
   });
+  const isOwner = () => state.me?.user?.role === "owner";
 
-  /* ---------- 畫面切換 / 登入 / 首次設定 ---------- */
-  function showScreen(name) {
-    for (const id of ["setup", "login", "shell"]) $("#" + id).classList.toggle("hidden", id !== name);
+  /* ---------- 登入 / 註冊 ---------- */
+  function showGate() {
+    $("#gate").classList.remove("hidden");
+    $("#shell").classList.add("hidden");
   }
-  $("#setup-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    $("#setup-error").textContent = "";
-    const p1 = $("#setup-password").value;
-    const p2 = $("#setup-password2").value;
-    if (p1 !== p2) return ($("#setup-error").textContent = "兩次輸入的密碼不一樣");
-    try {
-      await api("/auth/setup", { method: "POST", body: { password: p1 } });
-      showScreen("shell");
-      location.hash = "#settings";
-      route();
-    } catch (err) {
-      $("#setup-error").textContent = err.message;
-    }
+  function showShell() {
+    $("#gate").classList.add("hidden");
+    $("#shell").classList.remove("hidden");
+    const u = state.me?.user;
+    $("#who").textContent = u ? `${u.name || u.email}${u.role === "owner" ? "（擁有者）" : ""}` : "";
+    document.querySelectorAll(".owner-only").forEach((el) => el.classList.toggle("hidden", !isOwner()));
+    document.querySelectorAll(".app-name").forEach((el) => (el.textContent = state.me?.app_name || "Lakeze Go"));
+    renderBanner();
+  }
+  function renderBanner() {
+    const b = $("#banner");
+    const sub = state.me?.user?.subscription;
+    if (!sub || sub.source === "owner") return b.classList.add("hidden");
+    b.classList.remove("hidden");
+    if (!sub.active) {
+      b.className = "banner err";
+      b.innerHTML = `⚠️ 你的方案已到期，自動回覆已暫停。<a href="#billing">立即續約 →</a>`;
+    } else if (sub.source === "trial") {
+      b.className = "banner" + (sub.days_left <= 3 ? " warn" : "");
+      b.innerHTML = `🎁 免費試用中，還有 ${sub.days_left} 天（${fmtDate(sub.until)} 到期）。<a href="#billing">查看方案 →</a>`;
+    } else if (sub.days_left <= 7) {
+      b.className = "banner warn";
+      b.innerHTML = `⏰ 方案將於 ${fmtDate(sub.until)} 到期（剩 ${sub.days_left} 天）。<a href="#billing">續約 →</a>`;
+    } else b.classList.add("hidden");
+  }
+  document.querySelectorAll(".tab").forEach((t) => {
+    t.onclick = () => {
+      document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x === t));
+      $("#login-form").classList.toggle("hidden", t.dataset.tab !== "login");
+      $("#signup-form").classList.toggle("hidden", t.dataset.tab !== "signup");
+    };
   });
+  async function afterAuth() {
+    state.me = await api("/auth/me");
+    showShell();
+    route();
+  }
   $("#login-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     $("#login-error").textContent = "";
     try {
-      await api("/auth/login", { method: "POST", body: { password: $("#login-password").value } });
-      showScreen("shell");
-      route();
+      await api("/auth/login", { method: "POST", body: { email: $("#login-email").value, password: $("#login-password").value } });
+      await afterAuth();
     } catch (err) {
       $("#login-error").textContent = err.message;
     }
   });
+  $("#signup-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    $("#signup-error").textContent = "";
+    try {
+      await api("/auth/signup", {
+        method: "POST",
+        body: { name: $("#signup-name").value, email: $("#signup-email").value, password: $("#signup-password").value },
+      });
+      await afterAuth();
+      if (isOwner()) location.hash = "#settings";
+    } catch (err) {
+      $("#signup-error").textContent = err.message;
+    }
+  });
   $("#logout").addEventListener("click", async () => {
     await api("/auth/logout", { method: "POST" });
-    showScreen("login");
+    state.me = null;
+    showGate();
   });
 
   /* ---------- 路由 ---------- */
-  const TRIGGER_LABEL = {
-    ad: "指定廣告 ID",
-    ref: "ref 參數",
-    any_ad: "任何廣告點擊",
-    keyword: "關鍵字",
-    postback: "按鈕 payload",
-    get_started: "開始使用",
-    default: "預設回覆",
-  };
+  const TRIGGER_LABEL = { ad: "指定廣告 ID", ref: "ref 參數", any_ad: "任何廣告點擊", keyword: "關鍵字", postback: "按鈕 payload", get_started: "開始使用", default: "預設回覆" };
   const TRIGGER_HELP = {
     ad: "填廣告 ID（可多個，用逗號分隔）。在廣告管理員的廣告層級可看到 ID；Meta 傳 webhook 時會帶 referral.ad_id。",
     ref: "填 ref 值（可多個）。在廣告的「訊息範本 → 進階 → ref 參數」設定，或 m.me/你的專頁?ref=xxx 連結。支援前綴比對。",
@@ -102,8 +138,9 @@
     const { page, args, query } = parseHash();
     document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.getAttribute("href") === "#" + page));
     if (query.get("error")) toast(query.get("error"), true);
-    const pages = { overview, automations, contacts, events, channels, simulate, settings };
-    (pages[page] || overview)(...args).catch((err) => {
+    if (query.get("paid")) toast("付款成功，方案已延長 🎉");
+    const pages = { overview, automations, contacts, events, channels, simulate, billing, settings };
+    (pages[page] || overview)(...args, query).catch((err) => {
       if (err.message !== "未登入") toast(err.message, true);
     });
   }
@@ -114,7 +151,7 @@
     const o = await api("/overview");
     const s = o.stats;
     const steps = [
-      { done: o.app_configured, text: "在「設定」頁填入 Meta App ID 與 App Secret", link: "#settings" },
+      ...(isOwner() ? [{ done: o.app_configured, text: "在「平台設定」填入 Meta App ID 與 App Secret", link: "#settings" }] : []),
       { done: o.channels.length > 0, text: "在「頻道」頁用 Facebook 登入連接粉絲專頁", link: "#channels" },
       { done: s.automations > 0, text: "建立第一條自動化（廣告點擊 → 回覆 + 導購按鈕）", link: "#automations" },
     ];
@@ -127,12 +164,14 @@
         ${stat(s.link_clicks, "導購連結點擊")}
         ${stat(s.automations, "啟用中的自動化")}
       </div>
+      ${o.platform ? `<div class="card"><h2>平台概況</h2><div class="grid">${stat(o.platform.users, "註冊用戶")}${stat(o.platform.paying_users, "付費中用戶")}${stat(money(o.platform.revenue), "累計營收")}${stat(o.platform.channels, "已連接頻道")}</div></div>` : ""}
       <div class="card">
         <h2>上線進度</h2>
         <ol class="steps-guide check-list">
           ${steps.map((st) => `<li>${st.done ? "✅" : "⬜"} <a href="${st.link}">${st.text}</a></li>`).join("")}
           <li>⬜ 在廣告管理員建立「訊息」目標（Click to Messenger / Instagram）的廣告，想分流不同廣告可用「ref 參數」或「廣告 ID」當觸發條件。</li>
         </ol>
+        ${!o.app_configured && !isOwner() ? '<p class="hint">平台管理員尚未設定 Meta App，暫時無法連接粉絲專頁。</p>' : ""}
       </div>
       <div class="card">
         <h2>已連接的頻道</h2>
@@ -143,66 +182,203 @@
   const platformBadge = (p) =>
     p === "instagram" ? '<span class="badge ig">Instagram</span>' : p === "messenger" ? '<span class="badge fb">Messenger</span>' : '<span class="badge off">全部</span>';
 
-  /* ---------- 設定 ---------- */
-  async function settings() {
-    const s = await api("/settings");
+  /* ---------- 方案與付款 ---------- */
+  async function billing() {
+    const b = await api("/billing");
+    state.me.user.subscription = b.subscription;
+    renderBanner();
+    const sub = b.subscription;
+    const subText = {
+      owner: "平台擁有者，不受方案限制。",
+      paid: `付費方案使用中，到期日 ${fmtDate(sub.until)}（剩 ${sub.days_left} 天）。購買會從到期日往後累加。`,
+      trial: `免費試用中，到期日 ${fmtDate(sub.until)}（剩 ${sub.days_left} 天）。購買後從今天起算。`,
+      expired: `方案已於 ${fmtDate(sub.until)} 到期，自動回覆已暫停。`,
+      none: "尚未開通方案。",
+    }[sub.source];
     view.innerHTML = `
-      <h2>設定</h2>
+      <h2>方案與付款</h2>
       <div class="card">
-        <h2>1. Meta App</h2>
-        <div class="hint">
-          到 <a href="https://developers.facebook.com/apps/" target="_blank" rel="noopener">Meta 開發者後台</a> 建立一個「商家」類型的 App，加入 <b>Messenger</b>、<b>Instagram</b> 與 <b>Facebook 登入</b> 產品。<br/>
-          在「App 設定 → 基本資料」可以找到 App ID 與 App Secret。
+        <h2>目前狀態 ${sub.active ? '<span class="badge ok">使用中</span>' : '<span class="badge err">已到期</span>'}</h2>
+        <p>${subText}</p>
+      </div>
+      <div class="card">
+        <h2>購買 / 續約</h2>
+        ${!b.payuni_configured ? '<p class="hint">平台尚未設定金流，暫時無法線上付款。請聯絡管理員。</p>' : b.payuni_sandbox ? '<p class="hint">⚠️ 目前為金流測試模式，不會真的扣款。</p>' : ""}
+        <div class="plans">
+          ${b.plans
+            .map(
+              (p) => `<div class="plan">
+                <div class="plan-name">${esc(p.name)}</div>
+                <div class="plan-price">${money(p.price)}</div>
+                <div class="muted small">${p.months} 個月${p.months > 1 ? `，平均每月 ${money(Math.round(p.price / p.months))}` : ""}</div>
+                <button class="btn primary" data-buy="${p.id}" ${b.payuni_configured ? "" : "disabled"}>${sub.source === "owner" ? "測試付款" : "購買"}</button>
+              </div>`,
+            )
+            .join("") || '<p class="muted">目前沒有可購買的方案。</p>'}
         </div>
-        <div class="two">
-          <label class="field"><span>App ID</span><input type="text" id="s-app-id" value="${esc(s.meta_app_id)}" placeholder="1234567890123456"/></label>
-          <label class="field"><span>App Secret ${s.meta_app_secret_set ? `<span class="badge ok">已設定 ${esc(s.meta_app_secret_masked)}</span>` : '<span class="badge warn">未設定</span>'}</span><input type="password" id="s-app-secret" placeholder="${s.meta_app_secret_set ? "留空代表不更改" : "貼上 App Secret"}"/></label>
+        <p class="muted small">付款由 PAYUNi 統一金流處理，支援信用卡等多種方式。付款完成後會自動回到這裡並延長方案。</p>
+      </div>
+      <div class="card">
+        <h2>付款記錄</h2>
+        ${b.orders.length
+          ? `<table><thead><tr><th>時間</th><th>訂單編號</th><th>方案</th><th>金額</th><th>狀態</th></tr></thead><tbody>${b.orders
+              .map(
+                (o) => `<tr><td class="small">${fmtTime(o.created_at)}</td><td class="mono small">${esc(o.order_no)}</td><td>${esc(o.plan_name)}（${o.months} 個月）</td><td>${money(o.amount)}</td>
+                <td>${o.status === "paid" ? '<span class="badge ok">已付款</span>' : o.status === "failed" ? '<span class="badge err">失敗</span>' : '<span class="badge warn">未完成</span>'}</td></tr>`,
+              )
+              .join("")}</tbody></table>`
+          : '<p class="muted">尚無付款記錄。</p>'}
+      </div>`;
+    view.querySelectorAll("[data-buy]").forEach((btn) => {
+      btn.onclick = async () => {
+        btn.disabled = true;
+        try {
+          const r = await api("/billing/checkout", { method: "POST", body: { plan_id: Number(btn.dataset.buy) } });
+          // 用隱藏表單 POST 到 PayUni 整合式支付頁
+          const form = document.createElement("form");
+          form.method = "POST";
+          form.action = r.action;
+          for (const [k, v] of Object.entries(r.fields)) {
+            const i = document.createElement("input");
+            i.type = "hidden";
+            i.name = k;
+            i.value = v;
+            form.appendChild(i);
+          }
+          document.body.appendChild(form);
+          form.submit();
+        } catch (err) {
+          toast(err.message, true);
+          btn.disabled = false;
+        }
+      };
+    });
+  }
+
+  /* ---------- 平台設定（擁有者） ---------- */
+  async function settings(tab) {
+    if (!isOwner()) return (location.hash = "#overview");
+    const [s, plans, usersList, allOrders] = await Promise.all([api("/settings"), api("/billing/plans"), api("/users"), api("/billing/orders/all")]);
+    view.innerHTML = `
+      <h2>平台設定</h2>
+      <div class="card">
+        <h2>1. 基本</h2>
+        <div class="three">
+          <label class="field"><span>平台名稱</span><input type="text" id="s-app-name" value="${esc(s.app_name)}"/></label>
+          <label class="field"><span>免費試用天數</span><input type="number" id="s-trial" min="0" max="365" value="${s.trial_days}"/></label>
+          <label class="field"><span>開放註冊</span><select id="s-signup"><option value="1" ${s.allow_signup ? "selected" : ""}>開放</option><option value="0" ${!s.allow_signup ? "selected" : ""}>關閉（僅現有用戶可登入）</option></select></label>
         </div>
-        <div class="two">
-          <label class="field"><span>對外網址（留空會依請求自動判斷，目前為 ${esc(s.resolved_public_url)}）</span><input type="url" id="s-public-url" value="${esc(s.public_url)}" placeholder="https://bot.example.com"/></label>
-          <label class="field"><span>Graph API 版本</span><input type="text" id="s-graph" value="${esc(s.graph_version)}"/></label>
-        </div>
-        <label class="field"><span>Webhook 驗證權杖（自動產生，一般不需更改）</span><input type="text" id="s-verify" value="${esc(s.verify_token)}"/></label>
-        <button class="btn primary" id="s-save">儲存設定</button>
+        <label class="field"><span>對外網址（留空會依請求自動判斷，目前為 ${esc(s.resolved_public_url)}）</span><input type="url" id="s-public-url" value="${esc(s.public_url)}" placeholder="https://go.example.com"/></label>
       </div>
 
       <div class="card">
-        <h2>2. 在 Meta App 填入這些網址</h2>
+        <h2>2. Meta App</h2>
+        <div class="hint">
+          到 <a href="https://developers.facebook.com/apps/" target="_blank" rel="noopener">Meta 開發者後台</a> 建立「商家」類型的 App，加入 <b>Facebook 登入</b>、<b>Messenger</b>、<b>Instagram</b> 產品。所有用戶都會用這個 App 連接他們的粉絲專頁。
+        </div>
+        <div class="two">
+          <label class="field"><span>App ID</span><input type="text" id="s-app-id" value="${esc(s.meta_app_id)}"/></label>
+          <label class="field"><span>App Secret ${s.meta_app_secret_set ? `<span class="badge ok">已設定 ${esc(s.meta_app_secret_masked)}</span>` : '<span class="badge warn">未設定</span>'}</span><input type="password" id="s-app-secret" placeholder="${s.meta_app_secret_set ? "留空代表不更改" : "貼上 App Secret"}"/></label>
+        </div>
+        <div class="two">
+          <label class="field"><span>Graph API 版本</span><input type="text" id="s-graph" value="${esc(s.graph_version)}"/></label>
+          <label class="field"><span>Webhook 驗證權杖（自動產生）</span><input type="text" id="s-verify" value="${esc(s.verify_token)}"/></label>
+        </div>
         <table>
-          <tr><th style="width:220px">Facebook 登入 → 有效的 OAuth 重新導向 URI</th><td>${copyable(s.oauth_redirect_url)}</td></tr>
+          <tr><th style="width:240px">Facebook 登入 → 有效的 OAuth 重新導向 URI</th><td>${copyable(s.oauth_redirect_url)}</td></tr>
           <tr><th>Webhook 回呼網址</th><td>${copyable(s.webhook_url)}</td></tr>
           <tr><th>Webhook 驗證權杖</th><td>${copyable(s.verify_token)}</td></tr>
           <tr><th>Webhook 訂閱欄位</th><td>${s.webhook_fields.map((f) => `<code>${f}</code>`).join(" ")}</td></tr>
         </table>
-        <p class="muted small">「Facebook 登入 → 設定 → 有效的 OAuth 重新導向 URI」一定要手動填；Webhook 可以用下面的按鈕自動登記，或在 Messenger → 設定 → Webhooks 手動填。</p>
-        <div class="row">
+        <div class="row" style="margin-top:8px">
           <button class="btn" id="s-register">⚡ 自動向 Meta 登記 Webhook</button>
-          <button class="btn ghost" id="s-status">查看目前登記狀態</button>
+          <button class="btn ghost" id="s-status">查看登記狀態</button>
         </div>
         <pre class="json hidden" id="s-register-result"></pre>
       </div>
 
       <div class="card">
-        <h2>3. 更改後台密碼</h2>
+        <h2>3. PAYUNi 統一金流</h2>
+        <div class="hint">到 <a href="https://www.payuni.com.tw/" target="_blank" rel="noopener">PAYUNi</a> 商店後台「串接資訊」取得商店代號、Hash Key、Hash IV。測試模式用測試區帳號。</div>
+        <div class="three">
+          <label class="field"><span>商店代號 MerID</span><input type="text" id="s-pu-mer" value="${esc(s.payuni_mer_id)}"/></label>
+          <label class="field"><span>Hash Key（32 字元）${s.payuni_hash_key_set ? '<span class="badge ok">已設定</span>' : ""}</span><input type="password" id="s-pu-key" placeholder="${s.payuni_hash_key_set ? "留空代表不更改" : ""}"/></label>
+          <label class="field"><span>Hash IV（16 字元）${s.payuni_hash_iv_set ? '<span class="badge ok">已設定</span>' : ""}</span><input type="password" id="s-pu-iv" placeholder="${s.payuni_hash_iv_set ? "留空代表不更改" : ""}"/></label>
+        </div>
+        <label class="switch"><input type="checkbox" id="s-pu-sandbox" ${s.payuni_sandbox ? "checked" : ""}/> 測試模式（連 sandbox-api.payuni.com.tw，不會真的扣款）</label>
+        <table style="margin-top:12px">
+          <tr><th style="width:240px">NotifyURL（伺服器通知）</th><td>${copyable(s.payuni_notify_url)}</td></tr>
+          <tr><th>ReturnURL（付款後導回）</th><td>${copyable(s.payuni_return_url)}</td></tr>
+        </table>
+        <p class="muted small">這兩個網址會隨每筆交易送給 PayUni，不需要在 PayUni 後台另外設定；若後台有「通知網址」欄位，填相同值即可。</p>
+      </div>
+
+      <div class="row" style="margin-bottom:16px"><button class="btn primary" id="s-save">儲存以上設定</button></div>
+
+      <div class="card">
+        <h2>4. 方案</h2>
+        <table><thead><tr><th>代碼</th><th>名稱</th><th>價格 (NT$)</th><th>月數</th><th>排序</th><th>上架</th><th></th></tr></thead><tbody id="plan-rows">
+          ${plans.map((p) => planRow(p)).join("")}
+          ${planRow({ id: "", code: "", name: "", price: "", months: "", sort: plans.length + 1, active: 1 }, true)}
+        </tbody></table>
+      </div>
+
+      <div class="card">
+        <h2>5. 用戶</h2>
+        <table><thead><tr><th>Email</th><th>名稱</th><th>角色</th><th>方案狀態</th><th>頻道 / 自動化</th><th>手動延長</th></tr></thead><tbody>
+          ${usersList
+            .map(
+              (u) => `<tr><td>${esc(u.email)}</td><td>${esc(u.name)}</td><td>${u.role === "owner" ? '<span class="badge">擁有者</span>' : "用戶"}</td>
+              <td>${subBadge(u.subscription)}</td><td>${u.channels} / ${u.automations}</td>
+              <td>${u.role === "owner" ? "" : `<span class="row"><input type="number" min="1" style="width:70px" value="1" data-grant-months="${u.id}"/> 個月 <button class="btn small" data-grant="${u.id}">延長</button></span>`}</td></tr>`,
+            )
+            .join("")}
+        </tbody></table>
+      </div>
+
+      <div class="card">
+        <h2>6. 全部訂單</h2>
+        ${allOrders.length
+          ? `<table><thead><tr><th>時間</th><th>用戶</th><th>訂單編號</th><th>方案</th><th>金額</th><th>狀態</th><th>PayUni 序號</th></tr></thead><tbody>${allOrders
+              .map(
+                (o) => `<tr><td class="small">${fmtTime(o.created_at)}</td><td class="small">${esc(o.email ?? "")}</td><td class="mono small">${esc(o.order_no)}</td><td>${esc(o.plan_name)}</td><td>${money(o.amount)}</td>
+                <td>${o.status === "paid" ? '<span class="badge ok">已付款</span>' : o.status === "failed" ? '<span class="badge err">失敗</span>' : '<span class="badge warn">未完成</span>'}</td><td class="mono small">${esc(o.payuni_trade_no ?? "")}</td></tr>`,
+              )
+              .join("")}</tbody></table>`
+          : '<p class="muted">尚無訂單。</p>'}
+      </div>
+
+      <div class="card">
+        <h2>7. 更改我的密碼</h2>
         <div class="three">
           <label class="field"><span>目前密碼</span><input type="password" id="pw-current" autocomplete="current-password"/></label>
           <label class="field"><span>新密碼（至少 8 字元）</span><input type="password" id="pw-new" autocomplete="new-password"/></label>
           <label class="field"><span>&nbsp;</span><button class="btn" id="pw-save">更改密碼</button></label>
         </div>
       </div>`;
+
     $("#s-save").onclick = async () => {
       try {
         await api("/settings", {
           method: "POST",
           body: {
+            app_name: $("#s-app-name").value,
+            trial_days: Number($("#s-trial").value),
+            allow_signup: $("#s-signup").value === "1",
+            public_url: $("#s-public-url").value,
             meta_app_id: $("#s-app-id").value,
             meta_app_secret: $("#s-app-secret").value,
-            public_url: $("#s-public-url").value,
             graph_version: $("#s-graph").value,
             verify_token: $("#s-verify").value,
+            payuni_mer_id: $("#s-pu-mer").value,
+            payuni_hash_key: $("#s-pu-key").value,
+            payuni_hash_iv: $("#s-pu-iv").value,
+            payuni_sandbox: $("#s-pu-sandbox").checked,
           },
         });
         toast("已儲存設定");
+        state.me = await api("/auth/me");
+        showShell();
         settings();
       } catch (err) {
         toast(err.message, true);
@@ -241,6 +417,57 @@
         toast(err.message, true);
       }
     };
+    view.querySelectorAll("[data-plan-save]").forEach((btn) => {
+      btn.onclick = async () => {
+        const tr = btn.closest("tr");
+        const g = (n) => tr.querySelector(`[data-f="${n}"]`);
+        try {
+          await api("/billing/plans", {
+            method: "POST",
+            body: { id: btn.dataset.planSave || undefined, code: g("code").value, name: g("name").value, price: Number(g("price").value), months: Number(g("months").value), sort: Number(g("sort").value), active: g("active").checked },
+          });
+          toast("方案已儲存");
+          settings();
+        } catch (err) {
+          toast(err.message, true);
+        }
+      };
+    });
+    view.querySelectorAll("[data-plan-del]").forEach((btn) => {
+      btn.onclick = async () => {
+        if (!confirm("刪除此方案？（不影響已購買的用戶）")) return;
+        await api(`/billing/plans/${btn.dataset.planDel}`, { method: "DELETE" });
+        settings();
+      };
+    });
+    view.querySelectorAll("[data-grant]").forEach((btn) => {
+      btn.onclick = async () => {
+        const months = Number(view.querySelector(`[data-grant-months="${btn.dataset.grant}"]`).value);
+        try {
+          const r = await api("/billing/grant", { method: "POST", body: { user_id: Number(btn.dataset.grant), months } });
+          toast(`已延長，到期日 ${fmtDate(r.paid_until)}`);
+          settings();
+        } catch (err) {
+          toast(err.message, true);
+        }
+      };
+    });
+  }
+  function planRow(p, isNew = false) {
+    return `<tr>
+      <td><input type="text" data-f="code" value="${esc(p.code)}" placeholder="monthly" style="width:110px"/></td>
+      <td><input type="text" data-f="name" value="${esc(p.name)}" placeholder="月繳方案"/></td>
+      <td><input type="number" data-f="price" value="${esc(p.price)}" style="width:100px"/></td>
+      <td><input type="number" data-f="months" value="${esc(p.months)}" style="width:70px"/></td>
+      <td><input type="number" data-f="sort" value="${esc(p.sort)}" style="width:60px"/></td>
+      <td><input type="checkbox" data-f="active" ${p.active ? "checked" : ""}/></td>
+      <td class="row"><button class="btn small" data-plan-save="${p.id}">${isNew ? "新增" : "儲存"}</button>${isNew ? "" : `<button class="btn small danger" data-plan-del="${p.id}">刪除</button>`}</td></tr>`;
+  }
+  function subBadge(sub) {
+    if (sub.source === "owner") return '<span class="badge">不限</span>';
+    if (sub.source === "paid") return `<span class="badge ok">付費至 ${fmtDate(sub.until)}</span>`;
+    if (sub.source === "trial") return `<span class="badge">試用至 ${fmtDate(sub.until)}</span>`;
+    return `<span class="badge err">已到期${sub.until ? " " + fmtDate(sub.until) : ""}</span>`;
   }
 
   /* ---------- 頻道 ---------- */
@@ -250,7 +477,7 @@
     view.innerHTML = `
       <div class="row between" style="margin-bottom:12px">
         <h2 style="margin:0">頻道</h2>
-        ${o.app_configured ? '<a class="btn fb" href="/auth/facebook">ƒ 用 Facebook 登入連接粉絲專頁</a>' : '<a class="btn" href="#settings">請先到「設定」填入 Meta App →</a>'}
+        ${o.app_configured ? '<a class="btn fb" href="/auth/facebook">ƒ 用 Facebook 登入連接粉絲專頁</a>' : isOwner() ? '<a class="btn" href="#settings">請先到「平台設定」填入 Meta App →</a>' : '<span class="muted small">平台尚未設定 Meta App</span>'}
       </div>
       <div class="card">
         ${list.length
@@ -265,12 +492,7 @@
       </div>
       <details class="card">
         <summary>進階：手動新增頻道（已有權杖時使用）</summary>
-        <div class="hint" style="margin-top:12px">
-          <b>Messenger：</b>ID 填粉絲專頁 ID，權杖填粉絲專頁存取權杖。<br/>
-          <b>Instagram：</b>ID 填 IG 專業帳號 ID。若權杖是用「Instagram 登入」取得的，勾選下方選項。<br/>
-          同一個 ID 再送一次會更新資料；權杖留空則保留原本的。
-        </div>
-        <div class="three">
+        <div class="three" style="margin-top:12px">
           <label class="field"><span>平台</span><select id="ch-platform"><option value="messenger">Messenger（粉絲專頁）</option><option value="instagram">Instagram</option></select></label>
           <label class="field"><span>粉絲專頁 ID / IG 帳號 ID</span><input type="text" id="ch-id"/></label>
           <label class="field"><span>顯示名稱</span><input type="text" id="ch-name"/></label>
@@ -283,13 +505,7 @@
       try {
         await api("/channels", {
           method: "POST",
-          body: {
-            platform: $("#ch-platform").value,
-            external_id: $("#ch-id").value,
-            name: $("#ch-name").value,
-            access_token: $("#ch-token").value,
-            instagram_login: $("#ch-iglogin").checked,
-          },
+          body: { platform: $("#ch-platform").value, external_id: $("#ch-id").value, name: $("#ch-name").value, access_token: $("#ch-token").value, instagram_login: $("#ch-iglogin").checked },
         });
         toast("已儲存頻道");
         channels();
@@ -340,10 +556,11 @@
         ${pages
           .map(
             (p) => `<label class="page-pick">
-              <input type="checkbox" value="${esc(p.id)}" ${p.already_connected ? "" : "checked"}/>
+              <input type="checkbox" value="${esc(p.id)}" ${p.already_connected || p.connected_by_other ? "" : "checked"} ${p.connected_by_other ? "disabled" : ""}/>
               <div><b>${esc(p.name)}</b> <span class="mono small muted">${esc(p.id)}</span>
                 ${p.instagram ? `<div class="small"><span class="badge ig">Instagram</span> ${esc(p.instagram.username ? "@" + p.instagram.username : p.instagram.id)}</div>` : ""}
                 ${p.already_connected ? '<div class="small ok-text">已連接過，勾選會更新權杖</div>' : ""}
+                ${p.connected_by_other ? '<div class="small warn-text">已被其他帳號連接</div>' : ""}
               </div></label>`,
           )
           .join("")}
@@ -398,10 +615,7 @@
           <td>${platformBadge(a.platform)}</td>
           <td>${a.triggered_count}</td>
           <td><label class="switch"><input type="checkbox" data-toggle="${a.id}" ${a.enabled ? "checked" : ""}/> ${a.enabled ? "啟用" : "停用"}</label></td>
-          <td class="row">
-            <a class="btn small" href="#automations/edit-${a.id}">編輯</a>
-            <button class="btn small danger" data-del="${a.id}">刪除</button>
-          </td></tr>`,
+          <td class="row"><a class="btn small" href="#automations/edit-${a.id}">編輯</a><button class="btn small danger" data-del="${a.id}">刪除</button></td></tr>`,
       )
       .join("");
     view.innerHTML = `
@@ -517,17 +731,11 @@
       </div>
 
       <div class="two">
-        <div class="card">
-          <h2>預覽</h2>
-          <div class="preview" id="preview">${previewHtml(a.steps)}</div>
-        </div>
+        <div class="card"><h2>預覽</h2><div class="preview" id="preview">${previewHtml(a.steps)}</div></div>
         <div class="card">
           <h2>儲存</h2>
           <p class="muted small">儲存後立即生效。建議先到「模擬測試」確認會命中這條規則。</p>
-          <div class="row">
-            <button class="btn primary" id="save">${isNew ? "建立自動化" : "儲存變更"}</button>
-            <a class="btn" href="#automations">取消</a>
-          </div>
+          <div class="row"><button class="btn primary" id="save">${isNew ? "建立自動化" : "儲存變更"}</button><a class="btn" href="#automations">取消</a></div>
           <p class="error" id="save-error"></p>
         </div>
       </div>`;
@@ -556,12 +764,10 @@
   function updateTriggerUi() {
     const a = state.editing;
     if (!a || !$("#trigger-help")) return;
-    const t = a.trigger_type;
-    $("#trigger-help").textContent = TRIGGER_HELP[t];
-    $("#trigger-value-field").style.visibility = ["ad", "ref", "keyword", "postback"].includes(t) ? "visible" : "hidden";
+    $("#trigger-help").textContent = TRIGGER_HELP[a.trigger_type];
+    $("#trigger-value-field").style.visibility = ["ad", "ref", "keyword", "postback"].includes(a.trigger_type) ? "visible" : "hidden";
   }
 
-  /* 編輯器的事件委派只掛一次 */
   const editorOpen = () => state.editing && $("#steps");
   function onEditorField(e) {
     if (!editorOpen()) return;
@@ -786,17 +992,19 @@
       )
       .join("")}</tbody></table>`;
   }
-  async function events() {
-    const [evs, lk] = await Promise.all([api("/events"), api("/links")]);
+  async function events(_arg, query) {
+    const all = isOwner() && query?.get("scope") === "all";
+    const [evs, lk] = await Promise.all([api(`/events${all ? "?scope=all" : ""}`), api("/links")]);
     view.innerHTML = `
-      <div class="row between" style="margin-bottom:12px"><h2 style="margin:0">記錄</h2><button class="btn" id="refresh">重新整理</button></div>
+      <div class="row between" style="margin-bottom:12px"><h2 style="margin:0">記錄</h2>
+        <span class="row">${isOwner() ? (all ? '<a class="btn small" href="#events">只看我的</a>' : '<a class="btn small" href="#events?scope=all">看全平台（含系統事件）</a>') : ""}<button class="btn" id="refresh">重新整理</button></span></div>
       <div class="card">${eventTable(evs)}</div>
       <div class="card"><h2>追蹤連結</h2>${
         lk.length
           ? `<table><thead><tr><th>追蹤網址</th><th>目的地</th><th>點擊</th></tr></thead><tbody>${lk.map((l) => `<tr><td class="mono small">/r/${esc(l.slug)}</td><td class="small">${esc(l.url)}</td><td>${l.clicks}</td></tr>`).join("")}</tbody></table>`
           : '<p class="muted">尚無追蹤連結（使用「文字 + 按鈕」步驟並勾選追蹤後會自動產生）。</p>'
       }</div>`;
-    $("#refresh").onclick = events;
+    $("#refresh").onclick = () => events(_arg, query);
   }
 
   /* ---------- 模擬測試 ---------- */
@@ -813,21 +1021,12 @@
           <label class="field"><span>按鈕 payload</span><input type="text" id="sim-payload" placeholder="例：WANT_PRICE"/></label>
           <button class="btn primary" id="sim-run">▶ 執行模擬</button>
         </div>
-        <div class="card">
-          <h2>結果</h2>
-          <div id="sim-result" class="muted">尚未執行</div>
-        </div>
+        <div class="card"><h2>結果</h2><div id="sim-result" class="muted">尚未執行</div></div>
       </div>`;
     $("#sim-run").onclick = async () => {
       const r = await api("/simulate", {
         method: "POST",
-        body: {
-          platform: $("#sim-platform").value,
-          ad_id: $("#sim-ad").value.trim(),
-          ref: $("#sim-ref").value.trim(),
-          text: $("#sim-text").value.trim(),
-          postback_payload: $("#sim-payload").value.trim(),
-        },
+        body: { platform: $("#sim-platform").value, ad_id: $("#sim-ad").value.trim(), ref: $("#sim-ref").value.trim(), text: $("#sim-text").value.trim(), postback_payload: $("#sim-payload").value.trim() },
       });
       const box = $("#sim-result");
       if (!r.matched) {
@@ -842,7 +1041,7 @@
   function renderOutgoing(m) {
     if (m.attachment?.type === "template") {
       const p = m.attachment.payload;
-      return `<div class="bubble">${esc(p.text)}${(p.buttons || []).map((b) => `<a class="pbtn" href="${esc(b.url || "#")}" target="_blank" rel="noopener">${esc(b.title)}${b.url ? " ↗" : ""}</a>`).join("")}</div>`;
+      return `<div class="bubble">${esc(p.text)}${(p.buttons || []).map((b) => `<span class="pbtn">${esc(b.title)}${b.url ? " ↗" : ""}</span>`).join("")}</div>`;
     }
     if (m.attachment?.type === "image") return `<div class="bubble"><img src="${esc(m.attachment.payload.url)}" style="max-width:100%;border-radius:8px"/></div>`;
     let html = `<div class="bubble">${esc(m.text)}</div>`;
@@ -853,14 +1052,19 @@
   /* ---------- 啟動 ---------- */
   (async () => {
     try {
-      const me = await api("/auth/me");
-      if (me.needs_setup) showScreen("setup");
-      else if (me.authenticated) {
-        showScreen("shell");
+      state.me = await api("/auth/me");
+      $("#gate-app-name").textContent = state.me.app_name || "Lakeze Go";
+      $("#gate-trial").textContent = state.me.trial_days > 0 ? `免費試用 ${state.me.trial_days} 天` : "註冊即可開始";
+      if (state.me.needs_setup) {
+        $("#signup-first").classList.remove("hidden");
+        $("#tab-signup").click();
+      } else if (!state.me.allow_signup) $("#tab-signup").classList.add("hidden");
+      if (state.me.authenticated) {
+        showShell();
         route();
-      } else showScreen("login");
+      } else showGate();
     } catch {
-      showScreen("login");
+      showGate();
     }
   })();
 })();

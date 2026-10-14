@@ -126,6 +126,25 @@ details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 pre.json { background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 8px; overflow: auto; font-size: 12px; max-height: 300px; }
 .empty { text-align: center; color: var(--muted); padding: 40px 0; }
 ol.steps-guide li { margin-bottom: 6px; }
+.gate-wrap { display: grid; grid-template-columns: 1.2fr 1fr; gap: 40px; max-width: 960px; width: 100%; padding: 24px; align-items: center; }
+.hero h1 { font-size: 32px; line-height: 1.25; margin: 16px 0 12px; }
+.hero-list { list-style: none; padding: 0; margin: 16px 0 0; }
+.hero-list li { margin-bottom: 8px; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+.tab { background: none; border: none; padding: 8px 14px; cursor: pointer; font-size: 15px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+.gate-form { display: flex; flex-direction: column; gap: 10px; }
+.login-card { width: auto; }
+@media (max-width: 800px) { .gate-wrap { grid-template-columns: 1fr; } .hero h1 { font-size: 24px; } }
+.banner { background: #eff6ff; border-bottom: 1px solid #bfdbfe; padding: 10px 24px; font-size: 14px; text-align: center; }
+.banner.warn { background: #fffbeb; border-color: #fde68a; }
+.banner.err { background: #fef2f2; border-color: #fecaca; }
+.banner a { margin-left: 8px; font-weight: 600; }
+.plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin: 12px 0; }
+.plan { border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; text-align: center; background: #fafbff; }
+.plan-name { font-weight: 600; margin-bottom: 6px; }
+.plan-price { font-size: 28px; font-weight: 700; margin-bottom: 4px; }
+.plan .btn { margin-top: 12px; width: 100%; }
 .btn.fb { background: #1877f2; border-color: #1877f2; color: #fff; }
 .btn.fb:hover { background: #166fe5; }
 .page-pick { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 8px; background: #fff; }

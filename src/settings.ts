@@ -2,22 +2,31 @@ import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import type { Request } from "express";
 import type { DB } from "./db.js";
 import { settingsStore } from "./db.js";
+import type { PayuniConfig } from "./billing/payuni.js";
 
 /**
- * 所有可在後台「設定」頁修改的設定都存在 SQLite 的 settings 表。
+ * 平台層級的設定都存在 settings 表，由平台擁有者在後台「設定」頁修改。
  * 環境變數只在第一次啟動時當作初始值灌入（之後以資料庫為準）。
  */
 export const KEYS = {
-  adminPasswordHash: "admin_password_hash",
   sessionSecret: "session_secret",
+  appName: "app_name",
+  allowSignup: "allow_signup",
+  trialDays: "trial_days",
   metaAppId: "meta_app_id",
   metaAppSecret: "meta_app_secret",
   verifyToken: "verify_token",
   graphVersion: "graph_version",
   publicUrl: "public_url",
+  payuniMerId: "payuni_mer_id",
+  payuniHashKey: "payuni_hash_key",
+  payuniHashIv: "payuni_hash_iv",
+  payuniSandbox: "payuni_sandbox",
 } as const;
 
 export const DEFAULT_GRAPH_VERSION = "v21.0";
+export const DEFAULT_TRIAL_DAYS = 14;
+export const DEFAULT_APP_NAME = "Lakeze Go";
 
 export function seedFromEnv(db: DB) {
   const seed = (key: string, envName: string) => {
@@ -29,9 +38,11 @@ export function seedFromEnv(db: DB) {
   seed(KEYS.graphVersion, "META_GRAPH_VERSION");
   seed(KEYS.publicUrl, "PUBLIC_URL");
   seed(KEYS.sessionSecret, "SESSION_SECRET");
-  if (settingsStore.get(db, KEYS.adminPasswordHash) === null && process.env.ADMIN_PASSWORD) {
-    settingsStore.set(db, KEYS.adminPasswordHash, hashPassword(process.env.ADMIN_PASSWORD));
-  }
+  seed(KEYS.payuniMerId, "PAYUNI_MER_ID");
+  seed(KEYS.payuniHashKey, "PAYUNI_HASH_KEY");
+  seed(KEYS.payuniHashIv, "PAYUNI_HASH_IV");
+  seed(KEYS.payuniSandbox, "PAYUNI_SANDBOX");
+  seed(KEYS.appName, "APP_NAME");
   if (settingsStore.get(db, KEYS.sessionSecret) === null) settingsStore.set(db, KEYS.sessionSecret, randomBytes(32).toString("hex"));
   if (settingsStore.get(db, KEYS.verifyToken) === null) settingsStore.set(db, KEYS.verifyToken, randomBytes(12).toString("hex"));
 }
@@ -42,7 +53,7 @@ export function hashPassword(password: string): string {
   const hash = scryptSync(password, salt, 64).toString("hex");
   return `scrypt:${salt}:${hash}`;
 }
-export function verifyPassword(password: string, stored: string | null): boolean {
+export function verifyPassword(password: string, stored: string | null | undefined): boolean {
   if (!stored) return false;
   const [algo, salt, hash] = stored.split(":");
   if (algo !== "scrypt" || !salt || !hash) return false;
@@ -50,17 +61,20 @@ export function verifyPassword(password: string, stored: string | null): boolean
   const expected = Buffer.from(hash, "hex");
   return candidate.length === expected.length && timingSafeEqual(candidate, expected);
 }
-export function hasAdminPassword(db: DB): boolean {
-  return settingsStore.get(db, KEYS.adminPasswordHash) !== null;
-}
-export function setAdminPassword(db: DB, password: string) {
-  settingsStore.set(db, KEYS.adminPasswordHash, hashPassword(password));
-}
-export function checkAdminPassword(db: DB, password: string): boolean {
-  return verifyPassword(password, settingsStore.get(db, KEYS.adminPasswordHash));
-}
 export function sessionSecret(db: DB): string {
   return settingsStore.get(db, KEYS.sessionSecret) ?? "";
+}
+
+/* ---------- 平台一般設定 ---------- */
+export function appName(db: DB): string {
+  return settingsStore.get(db, KEYS.appName) || DEFAULT_APP_NAME;
+}
+export function allowSignup(db: DB): boolean {
+  return (settingsStore.get(db, KEYS.allowSignup) ?? "1") !== "0";
+}
+export function trialDays(db: DB): number {
+  const n = Number(settingsStore.get(db, KEYS.trialDays));
+  return Number.isFinite(n) && n >= 0 && settingsStore.get(db, KEYS.trialDays) !== null ? n : DEFAULT_TRIAL_DAYS;
 }
 
 /* ---------- Meta 設定 ---------- */
@@ -77,6 +91,15 @@ export function metaConfig(db: DB): MetaConfig {
     verifyToken: settingsStore.get(db, KEYS.verifyToken) ?? "",
     graphVersion: settingsStore.get(db, KEYS.graphVersion) || DEFAULT_GRAPH_VERSION,
   };
+}
+
+/* ---------- PayUni 設定 ---------- */
+export function payuniConfig(db: DB): PayuniConfig | null {
+  const merId = settingsStore.get(db, KEYS.payuniMerId) ?? "";
+  const hashKey = settingsStore.get(db, KEYS.payuniHashKey) ?? "";
+  const hashIv = settingsStore.get(db, KEYS.payuniHashIv) ?? "";
+  if (!merId || !hashKey || !hashIv) return null;
+  return { merId, hashKey, hashIv, sandbox: (settingsStore.get(db, KEYS.payuniSandbox) ?? "1") !== "0" };
 }
 
 /** 對外網址：設定頁有填就用設定值，否則從目前請求推算（支援反向代理的 X-Forwarded-*） */

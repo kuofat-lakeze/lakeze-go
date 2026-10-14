@@ -1,15 +1,18 @@
 import { Router } from "express";
 import type { DB, AutomationInput } from "../db.js";
-import { automations, channels, contacts, events, links, settingsStore, stats } from "../db.js";
+import { automations, channels, contacts, events, links, platformStats, settingsStore, stats, users } from "../db.js";
 import type { IncomingEvent, Platform, Step, TriggerType } from "../types.js";
 import { createCaptureSender, type Sender } from "../meta/sendApi.js";
 import { runAutomation } from "../engine/runner.js";
 import { matchAutomation } from "../engine/matcher.js";
 import { parseWebhook } from "../meta/parser.js";
 import { handleIncomingEvent } from "../engine/handler.js";
-import { KEYS, metaConfig, resolvePublicUrl } from "../settings.js";
+import { allowSignup, appName, KEYS, metaConfig, payuniConfig, resolvePublicUrl, trialDays } from "../settings.js";
 import { listAppWebhooks, registerAppWebhook, setGetStarted, subscribePage, WEBHOOK_FIELDS } from "../meta/graph.js";
 import { callbackUrl, clearPending, getPending } from "./facebook.js";
+import { publicUser, requireOwner, userOf } from "./auth.js";
+import { subscriptionStatus } from "../billing/subscription.js";
+import { HttpError } from "./errors.js";
 
 export interface ApiOptions {
   db: DB;
@@ -20,38 +23,37 @@ export interface ApiOptions {
 const TRIGGER_TYPES: TriggerType[] = ["ad", "ref", "any_ad", "keyword", "postback", "get_started", "default"];
 const PLATFORMS = ["any", "messenger", "instagram"] as const;
 
-class HttpError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-
 const mask = (t: string) => (t.length > 10 ? `${t.slice(0, 6)}…${t.slice(-4)}` : t ? "••••" : "");
+function maskChannel<T extends { access_token: string }>(c: T) {
+  return { ...c, access_token: mask(c.access_token) };
+}
 
 export function apiRouter(opts: ApiOptions): Router {
   const { db, fetchImpl } = opts;
   const router = Router();
 
   router.get("/overview", (req, res) => {
+    const u = userOf(res);
     const cfg = metaConfig(db);
     res.json({
-      stats: stats(db),
-      public_url: resolvePublicUrl(db, req),
-      webhook_url: `${resolvePublicUrl(db, req)}/webhook`,
-      verify_token: cfg.verifyToken,
+      stats: stats(db, u.id),
+      subscription: subscriptionStatus(u),
       app_configured: !!(cfg.appId && cfg.appSecret),
-      graph_version: cfg.graphVersion,
-      channels: channels.list(db).map(maskChannel),
+      payuni_configured: payuniConfig(db) !== null,
+      channels: channels.list(db, u.id).map(maskChannel),
+      public_url: resolvePublicUrl(db, req),
+      platform: u.role === "owner" ? platformStats(db) : null,
     });
   });
 
-  /* ---- settings ---- */
-  router.get("/settings", (req, res) => {
+  /* ---- 平台設定（擁有者） ---- */
+  router.get("/settings", requireOwner, (req, res) => {
     const cfg = metaConfig(db);
+    const pu = payuniConfig(db);
     res.json({
+      app_name: appName(db),
+      allow_signup: allowSignup(db),
+      trial_days: trialDays(db),
       meta_app_id: cfg.appId,
       meta_app_secret_masked: mask(cfg.appSecret),
       meta_app_secret_set: !!cfg.appSecret,
@@ -62,11 +64,24 @@ export function apiRouter(opts: ApiOptions): Router {
       webhook_url: `${resolvePublicUrl(db, req)}/webhook`,
       oauth_redirect_url: callbackUrl(db, req),
       webhook_fields: WEBHOOK_FIELDS,
+      payuni_mer_id: settingsStore.get(db, KEYS.payuniMerId) ?? "",
+      payuni_hash_key_set: !!settingsStore.get(db, KEYS.payuniHashKey),
+      payuni_hash_iv_set: !!settingsStore.get(db, KEYS.payuniHashIv),
+      payuni_sandbox: pu ? pu.sandbox : (settingsStore.get(db, KEYS.payuniSandbox) ?? "1") !== "0",
+      payuni_notify_url: `${resolvePublicUrl(db, req)}/payuni/notify`,
+      payuni_return_url: `${resolvePublicUrl(db, req)}/payuni/return`,
     });
   });
-  router.post("/settings", (req, res) => {
+  router.post("/settings", requireOwner, (req, res) => {
     const b = req.body ?? {};
     const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+    if ("app_name" in b) settingsStore.set(db, KEYS.appName, str(b.app_name) || "Lakeze Go");
+    if ("allow_signup" in b) settingsStore.set(db, KEYS.allowSignup, b.allow_signup ? "1" : "0");
+    if ("trial_days" in b) {
+      const n = Number(b.trial_days);
+      if (!Number.isInteger(n) || n < 0 || n > 365) throw new HttpError(400, "試用天數需為 0 到 365");
+      settingsStore.set(db, KEYS.trialDays, String(n));
+    }
     if ("meta_app_id" in b) settingsStore.set(db, KEYS.metaAppId, str(b.meta_app_id));
     if (str(b.meta_app_secret)) settingsStore.set(db, KEYS.metaAppSecret, str(b.meta_app_secret));
     if (str(b.verify_token)) settingsStore.set(db, KEYS.verifyToken, str(b.verify_token));
@@ -80,11 +95,20 @@ export function apiRouter(opts: ApiOptions): Router {
       if (u) settingsStore.set(db, KEYS.publicUrl, u);
       else settingsStore.remove(db, KEYS.publicUrl);
     }
+    if ("payuni_mer_id" in b) settingsStore.set(db, KEYS.payuniMerId, str(b.payuni_mer_id));
+    if (str(b.payuni_hash_key)) {
+      if (str(b.payuni_hash_key).length !== 32) throw new HttpError(400, "PayUni HashKey 必須是 32 字元");
+      settingsStore.set(db, KEYS.payuniHashKey, str(b.payuni_hash_key));
+    }
+    if (str(b.payuni_hash_iv)) {
+      if (str(b.payuni_hash_iv).length !== 16) throw new HttpError(400, "PayUni HashIV 必須是 16 字元");
+      settingsStore.set(db, KEYS.payuniHashIv, str(b.payuni_hash_iv));
+    }
+    if ("payuni_sandbox" in b) settingsStore.set(db, KEYS.payuniSandbox, b.payuni_sandbox ? "1" : "0");
     res.json({ ok: true });
   });
 
-  /** 一鍵向 Meta 登記 Webhook（Meta 會立即回呼 GET /webhook 驗證，所以網址必須對外可連） */
-  router.post("/webhook/register", async (req, res) => {
+  router.post("/webhook/register", requireOwner, async (req, res) => {
     const cfg = metaConfig(db);
     if (!cfg.appId || !cfg.appSecret) throw new HttpError(400, "請先填入 Meta App ID 與 App Secret");
     const url = `${resolvePublicUrl(db, req)}/webhook`;
@@ -100,38 +124,54 @@ export function apiRouter(opts: ApiOptions): Router {
     events.log(db, { type: "info", summary: `登記 Webhook ${url}：page ${results.page.ok ? "成功" : "失敗"}、instagram ${results.instagram.ok ? "成功" : "失敗"}` });
     res.json({ url, results });
   });
-  router.get("/webhook/status", async (_req, res) => {
+  router.get("/webhook/status", requireOwner, async (_req, res) => {
     const cfg = metaConfig(db);
     if (!cfg.appId || !cfg.appSecret) throw new HttpError(400, "請先填入 Meta App ID 與 App Secret");
     res.json(await listAppWebhooks(cfg, fetchImpl));
   });
 
+  /* ---- 使用者管理（擁有者） ---- */
+  router.get("/users", requireOwner, (_req, res) => {
+    res.json(users.list(db).map((u) => ({ ...publicUser(u), channels: channels.list(db, u.id).length, automations: automations.list(db, u.id).length })));
+  });
+
   /* ---- Facebook 連接流程 ---- */
   router.get("/facebook/pending/:id", (req, res) => {
-    const pages = getPending(String(req.params.id));
+    const u = userOf(res);
+    const pages = getPending(String(req.params.id), u.id);
     if (!pages) throw new HttpError(404, "授權資料已過期，請重新連接 Facebook");
-    const existing = new Set(channels.list(db).map((c) => c.external_id));
+    const mine = new Set(channels.list(db, u.id).map((c) => c.external_id));
     res.json(
-      pages.map((p) => ({
-        id: p.id,
-        name: p.name,
-        instagram: p.instagram ? { id: p.instagram.id, username: p.instagram.username ?? null } : null,
-        already_connected: existing.has(p.id),
-      })),
+      pages.map((p) => {
+        const other = channels.byExternalId(db, p.id);
+        return {
+          id: p.id,
+          name: p.name,
+          instagram: p.instagram ? { id: p.instagram.id, username: p.instagram.username ?? null } : null,
+          already_connected: mine.has(p.id),
+          connected_by_other: !!other && other.user_id !== u.id,
+        };
+      }),
     );
   });
 
   router.post("/facebook/connect", async (req, res) => {
+    const u = userOf(res);
     const pendingId = String(req.body?.pending_id ?? "");
-    const pages = getPending(pendingId);
+    const pages = getPending(pendingId, u.id);
     if (!pages) throw new HttpError(404, "授權資料已過期，請重新連接 Facebook");
     const wanted: string[] = Array.isArray(req.body?.page_ids) ? req.body.page_ids.map(String) : [];
     if (wanted.length === 0) throw new HttpError(400, "請至少選擇一個粉絲專頁");
     const cfg = metaConfig(db);
     const results = [];
     for (const page of pages.filter((p) => wanted.includes(p.id))) {
+      const other = channels.byExternalId(db, page.id);
+      if (other && other.user_id !== u.id) {
+        results.push({ page_id: page.id, name: page.name, subscribed: false, get_started: false, instagram: null, errors: ["這個粉絲專頁已被其他帳號連接"] });
+        continue;
+      }
       const errors: string[] = [];
-      channels.upsert(db, { platform: "messenger", external_id: page.id, name: page.name, access_token: page.access_token, instagram_login: 0 });
+      channels.upsert(db, { user_id: u.id, platform: "messenger", external_id: page.id, name: page.name, access_token: page.access_token, instagram_login: 0 });
       let subscribed = false;
       let getStarted = false;
       try {
@@ -149,6 +189,7 @@ export function apiRouter(opts: ApiOptions): Router {
       let instagram: string | null = null;
       if (page.instagram) {
         channels.upsert(db, {
+          user_id: u.id,
           platform: "instagram",
           external_id: page.instagram.id,
           name: page.instagram.username ? `@${page.instagram.username}` : `${page.name}（Instagram）`,
@@ -157,7 +198,7 @@ export function apiRouter(opts: ApiOptions): Router {
         });
         instagram = page.instagram.username ?? page.instagram.id;
       }
-      events.log(db, { type: "info", summary: `已連接粉絲專頁「${page.name}」${instagram ? `與 Instagram ${instagram}` : ""}${errors.length ? `，但有警告：${errors.join("；")}` : ""}` });
+      events.log(db, { user_id: u.id, type: "info", summary: `已連接粉絲專頁「${page.name}」${instagram ? `與 Instagram ${instagram}` : ""}${errors.length ? `，但有警告：${errors.join("；")}` : ""}` });
       results.push({ page_id: page.id, name: page.name, subscribed, get_started: getStarted, instagram, errors });
     }
     clearPending(pendingId);
@@ -165,8 +206,9 @@ export function apiRouter(opts: ApiOptions): Router {
   });
 
   /* ---- channels ---- */
-  router.get("/channels", (_req, res) => res.json(channels.list(db).map(maskChannel)));
+  router.get("/channels", (_req, res) => res.json(channels.list(db, userOf(res).id).map(maskChannel)));
   router.post("/channels", (req, res) => {
+    const u = userOf(res);
     const b = req.body ?? {};
     const platform = b.platform as Platform;
     if (platform !== "messenger" && platform !== "instagram") throw new HttpError(400, "platform 必須是 messenger 或 instagram");
@@ -174,8 +216,10 @@ export function apiRouter(opts: ApiOptions): Router {
     const access_token = String(b.access_token ?? "").trim();
     if (!external_id) throw new HttpError(400, "請填寫粉絲專頁 ID / IG 帳號 ID");
     const existing = channels.byExternalId(db, external_id);
+    if (existing && existing.user_id !== u.id) throw new HttpError(409, "這個 ID 已被其他帳號連接");
     if (!access_token && !existing) throw new HttpError(400, "請填寫存取權杖");
     const ch = channels.upsert(db, {
+      user_id: u.id,
       platform,
       external_id,
       name: String(b.name ?? "").trim() || external_id,
@@ -185,25 +229,21 @@ export function apiRouter(opts: ApiOptions): Router {
     res.json(maskChannel(ch));
   });
   router.delete("/channels/:id", (req, res) => {
-    channels.remove(db, Number(req.params.id));
+    channels.remove(db, Number(req.params.id), userOf(res).id);
     res.json({ ok: true });
   });
-  /** 用真正的 Graph API 檢查權杖是否有效 */
   router.post("/channels/:id/test", async (req, res) => {
     const ch = channels.get(db, Number(req.params.id));
-    if (!ch) throw new HttpError(404, "頻道不存在");
+    if (!ch || ch.user_id !== userOf(res).id) throw new HttpError(404, "頻道不存在");
     const cfg = metaConfig(db);
     const host = ch.platform === "instagram" && ch.instagram_login ? "graph.instagram.com" : "graph.facebook.com";
-    const r = await fetchImpl(`https://${host}/${cfg.graphVersion}/me?fields=id,name`, {
-      headers: { authorization: `Bearer ${ch.access_token}` },
-    });
+    const r = await fetchImpl(`https://${host}/${cfg.graphVersion}/me?fields=id,name`, { headers: { authorization: `Bearer ${ch.access_token}` } });
     const body = (await r.json().catch(() => ({}))) as Record<string, unknown>;
     res.status(r.ok ? 200 : 400).json({ ok: r.ok, result: body });
   });
-  /** 重新訂閱 Webhook + 設定開始使用按鈕（例如手動新增的頻道） */
   router.post("/channels/:id/subscribe", async (req, res) => {
     const ch = channels.get(db, Number(req.params.id));
-    if (!ch) throw new HttpError(404, "頻道不存在");
+    if (!ch || ch.user_id !== userOf(res).id) throw new HttpError(404, "頻道不存在");
     if (ch.platform !== "messenger") throw new HttpError(400, "Instagram 頻道透過其綁定的粉絲專頁訂閱即可");
     const cfg = metaConfig(db);
     await subscribePage(cfg, ch.external_id, ch.access_token, fetchImpl);
@@ -212,41 +252,40 @@ export function apiRouter(opts: ApiOptions): Router {
   });
 
   /* ---- automations ---- */
-  router.get("/automations", (_req, res) => res.json(automations.list(db)));
+  router.get("/automations", (_req, res) => res.json(automations.list(db, userOf(res).id)));
   router.get("/automations/:id", (req, res) => {
-    const a = automations.get(db, Number(req.params.id));
+    const a = automations.get(db, Number(req.params.id), userOf(res).id);
     if (!a) throw new HttpError(404, "找不到自動化");
     res.json(a);
   });
   router.post("/automations", (req, res) => {
-    res.status(201).json(automations.create(db, validateAutomation(req.body)));
+    res.status(201).json(automations.create(db, validateAutomation(req.body, userOf(res).id)));
   });
   router.put("/automations/:id", (req, res) => {
-    const a = automations.update(db, Number(req.params.id), validateAutomation(req.body));
+    const a = automations.update(db, Number(req.params.id), validateAutomation(req.body, userOf(res).id));
     if (!a) throw new HttpError(404, "找不到自動化");
     res.json(a);
   });
   router.patch("/automations/:id/enabled", (req, res) => {
-    const a = automations.get(db, Number(req.params.id));
+    const u = userOf(res);
+    const a = automations.get(db, Number(req.params.id), u.id);
     if (!a) throw new HttpError(404, "找不到自動化");
     const { id: _id, triggered_count: _t, created_at: _c, updated_at: _u, ...rest } = a;
     res.json(automations.update(db, a.id, { ...rest, enabled: req.body?.enabled ? 1 : 0 }));
   });
   router.delete("/automations/:id", (req, res) => {
-    automations.remove(db, Number(req.params.id));
+    automations.remove(db, Number(req.params.id), userOf(res).id);
     res.json({ ok: true });
   });
 
-  /**
-   * 模擬：假裝有人從廣告點進來（或送訊息），看會命中哪條規則、送出什麼內容。
-   * 不會真的發訊息，也不會寫入聯絡人。
-   */
+  /** 模擬：不會真的發訊息，也不會寫入聯絡人 */
   router.post("/simulate", async (req, res) => {
+    const u = userOf(res);
     const b = req.body ?? {};
     const platform: Platform = b.platform === "instagram" ? "instagram" : "messenger";
     const event: IncomingEvent = {
       platform,
-      channel_external_id: String(b.channel_external_id ?? "SIMULATED"),
+      channel_external_id: "SIMULATED",
       sender_id: "SIMULATED_USER",
       timestamp: Date.now(),
       kind: b.postback_payload ? "postback" : b.text ? "message" : "referral",
@@ -258,8 +297,8 @@ export function apiRouter(opts: ApiOptions): Router {
           : null,
       raw: null,
     };
-    const channelRow = channels.list(db).find((c) => c.platform === platform);
-    const match = matchAutomation(event, automations.listEnabled(db), channelRow?.id ?? null);
+    const channelRow = channels.list(db, u.id).find((c) => c.platform === platform);
+    const match = matchAutomation(event, automations.listEnabled(db, u.id), channelRow?.id ?? null);
     if (!match) {
       res.json({ matched: null, messages: [] });
       return;
@@ -269,9 +308,11 @@ export function apiRouter(opts: ApiOptions): Router {
       db,
       sender: capture,
       publicUrl: resolvePublicUrl(db, req),
-      channel: channelRow ?? { id: 0, platform, external_id: "SIMULATED", name: "模擬頻道", access_token: "", instagram_login: 0, created_at: "" },
+      userId: u.id,
+      channel: channelRow ?? { id: 0, user_id: u.id, platform, external_id: "SIMULATED", name: "模擬頻道", access_token: "", instagram_login: 0, created_at: "" },
       contact: {
         id: 0,
+        user_id: u.id,
         channel_id: channelRow?.id ?? 0,
         platform,
         psid: "SIMULATED_USER",
@@ -293,48 +334,49 @@ export function apiRouter(opts: ApiOptions): Router {
     res.json({ matched: { id: match.id, name: match.name }, messages: capture.sent.map((s) => s.message) });
   });
 
-  /** 把一段 Meta webhook 原始 JSON 丟進來跑真實流程（會真的送訊息），方便除錯 */
-  router.post("/replay-webhook", async (req, res) => {
+  /** 把一段 Meta webhook 原始 JSON 重跑一次（會真的送訊息），擁有者除錯用 */
+  router.post("/replay-webhook", requireOwner, async (req, res) => {
     const incoming = parseWebhook(req.body);
     for (const ev of incoming) await handleIncomingEvent(ev, { db, sender: opts.sender, publicUrl: resolvePublicUrl(db, req) });
     res.json({ processed: incoming.length });
   });
 
   /* ---- contacts / events / links ---- */
-  router.get("/contacts", (req, res) => res.json(contacts.list(db, Number(req.query.limit ?? 200))));
+  router.get("/contacts", (req, res) => res.json(contacts.list(db, userOf(res).id, Number(req.query.limit ?? 200))));
   router.get("/contacts/:id", (req, res) => {
-    const c = contacts.get(db, Number(req.params.id));
+    const c = contacts.get(db, Number(req.params.id), userOf(res).id);
     if (!c) throw new HttpError(404, "找不到聯絡人");
     res.json({ contact: c, events: events.forContact(db, c.id) });
   });
   router.delete("/contacts/:id", (req, res) => {
-    contacts.remove(db, Number(req.params.id));
+    contacts.remove(db, Number(req.params.id), userOf(res).id);
     res.json({ ok: true });
   });
-  /** 手動發一則訊息給聯絡人（24 小時互動窗口內才會成功） */
   router.post("/contacts/:id/send", async (req, res) => {
-    const c = contacts.get(db, Number(req.params.id));
+    const u = userOf(res);
+    const c = contacts.get(db, Number(req.params.id), u.id);
     if (!c) throw new HttpError(404, "找不到聯絡人");
     const ch = channels.get(db, c.channel_id);
-    if (!ch) throw new HttpError(400, "聯絡人所屬頻道已刪除");
+    if (!ch) throw new HttpError(400, "聯絡人所屬頻道已移除");
+    if (!subscriptionStatus(u).active) throw new HttpError(402, "方案已到期，請先續約");
     const text = String(req.body?.text ?? "").trim();
     if (!text) throw new HttpError(400, "請輸入訊息");
     await opts.sender.send(ch, c.psid, { text });
-    events.log(db, { channel_id: ch.id, contact_id: c.id, type: "sent", summary: `手動送出：${text.slice(0, 60)}` });
+    events.log(db, { user_id: u.id, channel_id: ch.id, contact_id: c.id, type: "sent", summary: `手動送出：${text.slice(0, 60)}` });
     res.json({ ok: true });
   });
 
-  router.get("/events", (req, res) => res.json(events.list(db, Number(req.query.limit ?? 200))));
-  router.get("/links", (_req, res) => res.json(links.list(db)));
+  router.get("/events", (req, res) => {
+    const u = userOf(res);
+    const all = u.role === "owner" && req.query.scope === "all";
+    res.json(events.list(db, all ? null : u.id, Number(req.query.limit ?? 200)));
+  });
+  router.get("/links", (_req, res) => res.json(links.list(db, userOf(res).id)));
 
   return router;
 }
 
-function maskChannel<T extends { access_token: string }>(c: T) {
-  return { ...c, access_token: mask(c.access_token) };
-}
-
-export function validateAutomation(body: unknown): AutomationInput {
+export function validateAutomation(body: unknown, userId: number): AutomationInput {
   const b = (body ?? {}) as Record<string, unknown>;
   const name = String(b.name ?? "").trim();
   if (!name) throw new HttpError(400, "請填寫名稱");
@@ -349,6 +391,7 @@ export function validateAutomation(body: unknown): AutomationInput {
   const steps = validateSteps(b.steps);
   if (steps.length === 0) throw new HttpError(400, "至少要有一個回覆步驟");
   return {
+    user_id: userId,
     name,
     enabled: b.enabled === false || b.enabled === 0 ? 0 : 1,
     priority: Number.isFinite(Number(b.priority)) ? Number(b.priority) : 0,
@@ -401,10 +444,7 @@ function validateSteps(raw: unknown): Step[] {
         return {
           type: "quick_replies",
           text,
-          replies: replies.map((r: Record<string, unknown>) => ({
-            title: String(r.title ?? "").trim(),
-            payload: String(r.payload ?? r.title ?? "").trim(),
-          })),
+          replies: replies.map((r: Record<string, unknown>) => ({ title: String(r.title ?? "").trim(), payload: String(r.payload ?? r.title ?? "").trim() })),
         };
       }
       case "image": {
@@ -429,5 +469,3 @@ function validateSteps(raw: unknown): Step[] {
     }
   });
 }
-
-export { HttpError };

@@ -1,17 +1,19 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Server } from "node:http";
 import { createApp } from "../src/app.js";
-import { openDb, channels, contacts, automations, links, settingsStore } from "../src/db.js";
+import { openDb, channels, contacts, automations, links, settingsStore, users, plans, orders } from "../src/db.js";
 import { createCaptureSender } from "../src/meta/sendApi.js";
 import { signBody } from "../src/meta/signature.js";
-import { hashPassword, KEYS } from "../src/settings.js";
+import { KEYS } from "../src/settings.js";
+import { encrypt, hashInfo, toQueryString } from "../src/billing/payuni.js";
 
 const APP_SECRET = "secret123";
 const PAGE_ID = "PAGE1";
+const PAYUNI = { merId: "SHOP1", hashKey: "12345678901234567890123456789012", hashIv: "1234567890123456", sandbox: true };
 const db = openDb(":memory:");
 const sender = createCaptureSender();
 
-/** 假的 Graph API：模擬 OAuth、列出專頁、訂閱、messenger_profile */
+/** 假的 Graph API */
 const graphCalls: string[] = [];
 const fakeFetch: typeof fetch = async (input, init) => {
   const url = String(input);
@@ -34,28 +36,43 @@ const fakeFetch: typeof fetch = async (input, init) => {
 };
 
 const app = createApp({ db, sender, fetchImpl: fakeFetch });
-
 let server: Server;
 let base = "";
-const auth = { authorization: "Bearer pw", "content-type": "application/json" };
+const json = { "content-type": "application/json" };
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** 每個測試身分一個 cookie */
+const sessions: Record<string, string> = {};
+async function signup(key: string, email: string, password = "password123") {
+  const r = await fetch(`${base}/api/auth/signup`, { method: "POST", headers: json, body: JSON.stringify({ email, password, name: key }) });
+  if (r.status !== 201) throw new Error(`signup ${email} failed: ${r.status} ${await r.text()}`);
+  sessions[key] = r.headers.get("set-cookie")!.split(";")[0];
+  return (await r.json()) as { user: { id: number; role: string; subscription: { source: string; active: boolean } } };
+}
+const as = (key: string) => ({ ...json, cookie: sessions[key] });
+async function call(key: string, method: string, path: string, body?: unknown) {
+  const r = await fetch(`${base}/api${path}`, { method, headers: as(key), body: body === undefined ? undefined : JSON.stringify(body) });
+  return { status: r.status, body: (await r.json().catch(() => ({}))) as Record<string, unknown> & Record<string, never> };
+}
 
 beforeAll(async () => {
-  settingsStore.set(db, KEYS.adminPasswordHash, hashPassword("pw"));
   settingsStore.set(db, KEYS.sessionSecret, "test-secret");
   settingsStore.set(db, KEYS.verifyToken, "verify-me");
   settingsStore.set(db, KEYS.metaAppId, "APP123");
   settingsStore.set(db, KEYS.metaAppSecret, APP_SECRET);
   settingsStore.set(db, KEYS.publicUrl, "https://bot.example.com");
+  settingsStore.set(db, KEYS.payuniMerId, PAYUNI.merId);
+  settingsStore.set(db, KEYS.payuniHashKey, PAYUNI.hashKey);
+  settingsStore.set(db, KEYS.payuniHashIv, PAYUNI.hashIv);
+  settingsStore.set(db, KEYS.trialDays, "14");
+  plans.seedDefaults(db);
   await new Promise<void>((r) => {
     server = app.listen(0, () => r());
   });
   const addr = server.address();
   base = `http://127.0.0.1:${typeof addr === "object" && addr ? addr.port : 0}`;
-  channels.upsert(db, { platform: "messenger", external_id: PAGE_ID, name: "測試專頁", access_token: "tok", instagram_login: 0 });
 });
 afterAll(() => server.close());
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function postWebhook(body: unknown, sign = true) {
   const raw = JSON.stringify(body);
@@ -65,283 +82,239 @@ async function postWebhook(body: unknown, sign = true) {
     body: raw,
   });
 }
-
-describe("webhook 驗證", () => {
-  it("GET 驗證成功回 challenge", async () => {
-    const r = await fetch(`${base}/webhook?hub.mode=subscribe&hub.verify_token=verify-me&hub.challenge=abc`);
-    expect(r.status).toBe(200);
-    expect(await r.text()).toBe("abc");
-  });
-  it("GET 驗證 token 錯誤回 403", async () => {
-    const r = await fetch(`${base}/webhook?hub.mode=subscribe&hub.verify_token=wrong&hub.challenge=abc`);
-    expect(r.status).toBe(403);
-  });
-  it("POST 沒簽章回 401", async () => {
-    const r = await postWebhook({ object: "page", entry: [] }, false);
-    expect(r.status).toBe(401);
-  });
-});
-
-describe("後台 API 權限", () => {
-  it("未登入拒絕", async () => {
-    const r = await fetch(`${base}/api/automations`);
-    expect(r.status).toBe(401);
-  });
-  it("密碼登入後可用 cookie", async () => {
-    const r = await fetch(`${base}/api/auth/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "pw" }) });
-    expect(r.status).toBe(200);
-    const cookie = r.headers.get("set-cookie")!.split(";")[0];
-    const r2 = await fetch(`${base}/api/overview`, { headers: { cookie } });
-    expect(r2.status).toBe(200);
-    const j = (await r2.json()) as { webhook_url: string; app_configured: boolean };
-    expect(j.webhook_url).toBe("https://bot.example.com/webhook");
-    expect(j.app_configured).toBe(true);
-  });
-  it("錯誤密碼 401，且已設定密碼後不能再 setup", async () => {
-    const r = await fetch(`${base}/api/auth/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "nope" }) });
-    expect(r.status).toBe(401);
-    const s = await fetch(`${base}/api/auth/setup`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "whatever123" }) });
-    expect(s.status).toBe(400);
-  });
-});
-
-describe("首次設定密碼", () => {
-  it("全新資料庫 needs_setup = true，設定後即登入", async () => {
-    const freshDb = openDb(":memory:");
-    settingsStore.set(freshDb, KEYS.sessionSecret, "x");
-    const freshApp = createApp({ db: freshDb, sender, fetchImpl: fakeFetch });
-    const s = await new Promise<Server>((r) => {
-      const srv = freshApp.listen(0, () => r(srv));
-    });
-    const addr = s.address();
-    const b = `http://127.0.0.1:${typeof addr === "object" && addr ? addr.port : 0}`;
-    try {
-      const me = (await (await fetch(`${b}/api/auth/me`)).json()) as { needs_setup: boolean };
-      expect(me.needs_setup).toBe(true);
-      const short = await fetch(`${b}/api/auth/setup`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "short" }) });
-      expect(short.status).toBe(400);
-      const ok = await fetch(`${b}/api/auth/setup`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "longenough" }) });
-      expect(ok.status).toBe(200);
-      const cookie = ok.headers.get("set-cookie")!.split(";")[0];
-      const me2 = (await (await fetch(`${b}/api/auth/me`, { headers: { cookie } })).json()) as { authenticated: boolean; needs_setup: boolean };
-      expect(me2).toEqual({ authenticated: true, needs_setup: false });
-    } finally {
-      s.close();
-    }
-  });
-});
-
-describe("設定頁", () => {
-  it("儲存設定並反映在 overview", async () => {
-    const r = await fetch(`${base}/api/settings`, { method: "POST", headers: auth, body: JSON.stringify({ meta_app_id: "APP123", graph_version: "v22.0" }) });
-    expect(r.status).toBe(200);
-    const s = (await (await fetch(`${base}/api/settings`, { headers: auth })).json()) as { graph_version: string; oauth_redirect_url: string; meta_app_secret_set: boolean };
-    expect(s.graph_version).toBe("v22.0");
-    expect(s.oauth_redirect_url).toBe("https://bot.example.com/auth/facebook/callback");
-    expect(s.meta_app_secret_set).toBe(true);
-  });
-  it("拒絕格式錯誤的 Graph 版本", async () => {
-    const r = await fetch(`${base}/api/settings`, { method: "POST", headers: auth, body: JSON.stringify({ graph_version: "22" }) });
-    expect(r.status).toBe(400);
-  });
-  it("一鍵登記 Webhook 會對 page 與 instagram 各呼叫一次", async () => {
-    graphCalls.length = 0;
-    const r = await fetch(`${base}/api/webhook/register`, { method: "POST", headers: auth });
-    const j = (await r.json()) as { results: { page: { ok: boolean }; instagram: { ok: boolean } } };
-    expect(j.results.page.ok).toBe(true);
-    expect(j.results.instagram.ok).toBe(true);
-    expect(graphCalls.filter((c) => c.includes("/APP123/subscriptions"))).toHaveLength(2);
-  });
-});
-
-describe("Facebook 登入連接粉絲專頁", () => {
-  it("完整 OAuth → 選擇專頁 → 自動訂閱與設定開始使用", async () => {
-    const login = await fetch(`${base}/api/auth/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "pw" }) });
-    const session = login.headers.get("set-cookie")!.split(";")[0];
-
-    // 1. 開始授權：應導向 facebook 並種下 state cookie
-    const start = await fetch(`${base}/auth/facebook`, { headers: { cookie: session }, redirect: "manual" });
-    expect(start.status).toBe(302);
-    const dialog = new URL(start.headers.get("location")!);
-    expect(dialog.hostname).toBe("www.facebook.com");
-    expect(dialog.searchParams.get("client_id")).toBe("APP123");
-    expect(dialog.searchParams.get("redirect_uri")).toBe("https://bot.example.com/auth/facebook/callback");
-    const state = dialog.searchParams.get("state")!;
-    const stateCookie = start.headers.get("set-cookie")!.split(";")[0];
-
-    // 2. 回呼：換權杖、列專頁、導到選擇頁
-    const cb = await fetch(`${base}/auth/facebook/callback?code=CODE&state=${state}`, {
-      headers: { cookie: `${session}; ${stateCookie}` },
-      redirect: "manual",
-    });
-    expect(cb.status).toBe(302);
-    const loc = cb.headers.get("location")!;
-    expect(loc.startsWith("/#channels/connect/")).toBe(true);
-    const pendingId = loc.split("/").pop()!;
-
-    // state 不符要被拒絕
-    const bad = await fetch(`${base}/auth/facebook/callback?code=CODE&state=wrong`, { headers: { cookie: `${session}; ${stateCookie}` }, redirect: "manual" });
-    expect(bad.headers.get("location")!.includes("error=")).toBe(true);
-
-    // 3. 列出可連接的專頁
-    const pages = (await (await fetch(`${base}/api/facebook/pending/${pendingId}`, { headers: auth })).json()) as { id: string; instagram: unknown }[];
-    expect(pages.map((p) => p.id)).toEqual(["PAGE_A", "PAGE_B"]);
-
-    // 4. 連接 A 專頁（含 IG）
-    graphCalls.length = 0;
-    const r = await fetch(`${base}/api/facebook/connect`, { method: "POST", headers: auth, body: JSON.stringify({ pending_id: pendingId, page_ids: ["PAGE_A"] }) });
-    const j = (await r.json()) as { results: { subscribed: boolean; get_started: boolean; instagram: string | null }[] };
-    expect(j.results[0]).toMatchObject({ subscribed: true, get_started: true, instagram: "a_shop" });
-    expect(graphCalls.some((c) => c.includes("/PAGE_A/subscribed_apps"))).toBe(true);
-    expect(graphCalls.some((c) => c.includes("/me/messenger_profile"))).toBe(true);
-
-    const fb = channels.byExternalId(db, "PAGE_A")!;
-    expect(fb.platform).toBe("messenger");
-    expect(fb.access_token).toBe("PAGE_A_TOKEN");
-    const ig = channels.byExternalId(db, "IG_A")!;
-    expect(ig.platform).toBe("instagram");
-    expect(ig.name).toBe("@a_shop");
-    expect(ig.access_token).toBe("PAGE_A_TOKEN");
-
-    // pending 用過即失效
-    const gone = await fetch(`${base}/api/facebook/pending/${pendingId}`, { headers: auth });
-    expect(gone.status).toBe(404);
-  });
-});
-
-describe("廣告點擊 → 自動回覆 → 導購連結（核心流程）", () => {
-  let automationId = 0;
-
-  it("建立自動化", async () => {
-    const r = await fetch(`${base}/api/automations`, {
-      method: "POST",
-      headers: auth,
-      body: JSON.stringify({
-        name: "廣告接待",
-        trigger_type: "any_ad",
-        priority: 5,
-        steps: [
-          { type: "text", text: "{{first_name}} 你好！" },
-          { type: "buttons", text: "點這裡前往", buttons: [{ type: "url", title: "前往官網", url: "https://shop.example.com/landing?utm=ad" }] },
-          { type: "tag", tag: "ad-lead" },
-        ],
-      }),
-    });
-    expect(r.status).toBe(201);
-    automationId = ((await r.json()) as { id: number }).id;
-  });
-
-  it("驗證錯誤的自動化會被拒絕", async () => {
-    const r = await fetch(`${base}/api/automations`, {
-      method: "POST",
-      headers: auth,
-      body: JSON.stringify({ name: "bad", trigger_type: "ad", trigger_value: "", steps: [] }),
-    });
-    expect(r.status).toBe(400);
-    const r2 = await fetch(`${base}/api/automations`, {
-      method: "POST",
-      headers: auth,
-      body: JSON.stringify({ name: "bad url", trigger_type: "any_ad", steps: [{ type: "buttons", text: "x", buttons: [{ type: "url", title: "go", url: "https://" }] }] }),
-    });
-    expect(r2.status).toBe(400);
-  });
-
-  it("收到廣告 referral 後送出兩則訊息、建立聯絡人與追蹤連結", async () => {
-    sender.sent.length = 0;
-    const r = await postWebhook({
-      object: "page",
-      entry: [
+const adEvent = (sender_id: string, timestamp: number) => ({
+  object: "page",
+  entry: [
+    {
+      id: PAGE_ID,
+      messaging: [
         {
-          id: PAGE_ID,
-          messaging: [
-            {
-              sender: { id: "USER_A" },
-              recipient: { id: PAGE_ID },
-              timestamp: 1700000000001,
-              postback: { title: "開始使用", payload: "GET_STARTED", referral: { ref: "spring", source: "ADS", type: "OPEN_THREAD", ad_id: "AD777" } },
-            },
-          ],
+          sender: { id: sender_id },
+          recipient: { id: PAGE_ID },
+          timestamp,
+          postback: { title: "開始使用", payload: "GET_STARTED", referral: { ref: "spring", source: "ADS", type: "OPEN_THREAD", ad_id: "AD777" } },
         },
       ],
+    },
+  ],
+});
+
+describe("註冊 / 登入 / 角色", () => {
+  it("第一位註冊者是擁有者且不受方案限制", async () => {
+    const me0 = (await (await fetch(`${base}/api/auth/me`)).json()) as { needs_setup: boolean };
+    expect(me0.needs_setup).toBe(true);
+    const r = await signup("owner", "owner@example.com");
+    expect(r.user.role).toBe("owner");
+    expect(r.user.subscription.source).toBe("owner");
+  });
+  it("第二位註冊者是一般用戶並獲得試用", async () => {
+    const r = await signup("alice", "alice@example.com");
+    expect(r.user.role).toBe("member");
+    expect(r.user.subscription).toMatchObject({ source: "trial", active: true });
+    const u = users.byEmail(db, "alice@example.com")!;
+    expect(new Date(u.trial_until!).getTime()).toBeGreaterThan(Date.now() + 13 * 86400000);
+  });
+  it("重複 Email、短密碼、錯誤登入都被拒絕", async () => {
+    const dup = await fetch(`${base}/api/auth/signup`, { method: "POST", headers: json, body: JSON.stringify({ email: "alice@example.com", password: "password123" }) });
+    expect(dup.status).toBe(409);
+    const short = await fetch(`${base}/api/auth/signup`, { method: "POST", headers: json, body: JSON.stringify({ email: "x@example.com", password: "short" }) });
+    expect(short.status).toBe(400);
+    const bad = await fetch(`${base}/api/auth/login`, { method: "POST", headers: json, body: JSON.stringify({ email: "alice@example.com", password: "wrong" }) });
+    expect(bad.status).toBe(401);
+    const ok = await fetch(`${base}/api/auth/login`, { method: "POST", headers: json, body: JSON.stringify({ email: "alice@example.com", password: "password123" }) });
+    expect(ok.status).toBe(200);
+  });
+  it("未登入拒絕；一般用戶不能看平台設定", async () => {
+    expect((await fetch(`${base}/api/automations`)).status).toBe(401);
+    expect((await call("alice", "GET", "/settings")).status).toBe(403);
+    expect((await call("owner", "GET", "/settings")).status).toBe(200);
+  });
+  it("關閉註冊後新用戶不能註冊", async () => {
+    await call("owner", "POST", "/settings", { allow_signup: false });
+    const r = await fetch(`${base}/api/auth/signup`, { method: "POST", headers: json, body: JSON.stringify({ email: "late@example.com", password: "password123" }) });
+    expect(r.status).toBe(403);
+    await call("owner", "POST", "/settings", { allow_signup: true });
+  });
+});
+
+describe("webhook 驗證", () => {
+  it("GET 驗證成功回 challenge；token 錯誤 403；POST 無簽章 401", async () => {
+    const r = await fetch(`${base}/webhook?hub.mode=subscribe&hub.verify_token=verify-me&hub.challenge=abc`);
+    expect(await r.text()).toBe("abc");
+    expect((await fetch(`${base}/webhook?hub.mode=subscribe&hub.verify_token=wrong&hub.challenge=abc`)).status).toBe(403);
+    expect((await postWebhook({ object: "page", entry: [] }, false)).status).toBe(401);
+  });
+});
+
+describe("Facebook 連接（多用戶）", () => {
+  it("alice 走完 OAuth 並連接 A 專頁；bob 看不到也連不了同一專頁", async () => {
+    const start = await fetch(`${base}/auth/facebook`, { headers: { cookie: sessions.alice }, redirect: "manual" });
+    expect(start.status).toBe(302);
+    const dialog = new URL(start.headers.get("location")!);
+    expect(dialog.searchParams.get("client_id")).toBe("APP123");
+    const state = dialog.searchParams.get("state")!;
+    const stateCookie = start.headers.get("set-cookie")!.split(";")[0];
+    const cb = await fetch(`${base}/auth/facebook/callback?code=CODE&state=${state}`, { headers: { cookie: `${sessions.alice}; ${stateCookie}` }, redirect: "manual" });
+    const pendingId = cb.headers.get("location")!.split("/").pop()!;
+
+    await signup("bob", "bob@example.com");
+    expect((await call("bob", "GET", `/facebook/pending/${pendingId}`)).status).toBe(404);
+
+    const pages = (await call("alice", "GET", `/facebook/pending/${pendingId}`)).body as unknown as { id: string }[];
+    expect(pages.map((p) => p.id)).toEqual(["PAGE_A", "PAGE_B"]);
+    const r = await call("alice", "POST", "/facebook/connect", { pending_id: pendingId, page_ids: ["PAGE_A"] });
+    expect((r.body.results as { subscribed: boolean; instagram: string }[])[0]).toMatchObject({ subscribed: true, instagram: "a_shop" });
+    expect(channels.byExternalId(db, "PAGE_A")!.user_id).toBe(users.byEmail(db, "alice@example.com")!.id);
+    expect(channels.byExternalId(db, "IG_A")!.platform).toBe("instagram");
+
+    // bob 手動新增同一個 ID 會被擋
+    const dup = await call("bob", "POST", "/channels", { platform: "messenger", external_id: "PAGE_A", access_token: "x" });
+    expect(dup.status).toBe(409);
+    expect((await call("bob", "GET", "/channels")).body).toEqual([]);
+  });
+});
+
+describe("廣告點擊 → 自動回覆 → 導購（資料隔離）", () => {
+  let aliceAutomation = 0;
+  it("alice 連接 PAGE1 並建立自動化；bob 看不到", async () => {
+    const alice = users.byEmail(db, "alice@example.com")!;
+    channels.upsert(db, { user_id: alice.id, platform: "messenger", external_id: PAGE_ID, name: "測試專頁", access_token: "tok", instagram_login: 0 });
+    const r = await call("alice", "POST", "/automations", {
+      name: "廣告接待",
+      trigger_type: "any_ad",
+      steps: [
+        { type: "text", text: "{{first_name}} 你好！" },
+        { type: "buttons", text: "點這裡前往", buttons: [{ type: "url", title: "前往官網", url: "https://shop.example.com/landing" }] },
+        { type: "tag", tag: "ad-lead" },
+      ],
     });
-    expect(r.status).toBe(200);
+    expect(r.status).toBe(201);
+    aliceAutomation = r.body.id as number;
+    expect((await call("bob", "GET", "/automations")).body).toEqual([]);
+    expect((await call("bob", "GET", `/automations/${aliceAutomation}`)).status).toBe(404);
+  });
+
+  it("廣告 referral 進來 → 送兩則訊息、建立 alice 的聯絡人與追蹤連結", async () => {
+    sender.sent.length = 0;
+    const r = await postWebhook(adEvent("USER_A", 1700000000001));
     expect(await r.text()).toBe("EVENT_RECEIVED");
     await sleep(50);
-
     expect(sender.sent).toHaveLength(2);
-    expect(sender.sent[0].recipientId).toBe("USER_A");
     expect(sender.sent[0].message.text).toBe("測試 你好！");
-
-    const tmpl = sender.sent[1].message as { attachment: { payload: { buttons: { type: string; url: string; title: string }[] } } };
-    const btn = tmpl.attachment.payload.buttons[0];
-    expect(btn.type).toBe("web_url");
-    expect(btn.title).toBe("前往官網");
+    const btn = (sender.sent[1].message as { attachment: { payload: { buttons: { url: string }[] } } }).attachment.payload.buttons[0];
     expect(btn.url.startsWith("https://bot.example.com/r/")).toBe(true);
 
-    const contact = contacts.find(db, 1, "USER_A")!;
+    const ch = channels.byExternalId(db, PAGE_ID)!;
+    const contact = contacts.find(db, ch.id, "USER_A")!;
+    expect(contact.user_id).toBe(ch.user_id);
     expect(contact.source_ad_id).toBe("AD777");
-    expect(contact.source_ref).toBe("spring");
-    expect(contact.source_automation_id).toBe(automationId);
     expect(contact.tags).toEqual(["ad-lead"]);
-    expect(automations.get(db, automationId)!.triggered_count).toBe(1);
+    expect(automations.get(db, aliceAutomation)!.triggered_count).toBe(1);
 
     const slug = btn.url.split("/r/")[1].split("?")[0];
     const redirect = await fetch(btn.url.replace("https://bot.example.com", base), { redirect: "manual" });
     expect(redirect.status).toBe(302);
-    expect(redirect.headers.get("location")).toBe("https://shop.example.com/landing?utm=ad");
+    expect(redirect.headers.get("location")).toBe("https://shop.example.com/landing");
     expect(links.bySlug(db, slug)!.clicks).toBe(1);
+
+    expect(((await call("alice", "GET", "/contacts")).body as unknown as unknown[]).length).toBe(1);
+    expect((await call("bob", "GET", "/contacts")).body).toEqual([]);
+    expect((await call("bob", "GET", `/contacts/${contact.id}`)).status).toBe(404);
   });
 
   it("Meta 重送同一事件不會重複回覆", async () => {
     sender.sent.length = 0;
-    await postWebhook({
-      object: "page",
-      entry: [
-        {
-          id: PAGE_ID,
-          messaging: [
-            {
-              sender: { id: "USER_A" },
-              recipient: { id: PAGE_ID },
-              timestamp: 1700000000001,
-              postback: { title: "開始使用", payload: "GET_STARTED", referral: { ref: "spring", source: "ADS", type: "OPEN_THREAD", ad_id: "AD777" } },
-            },
-          ],
-        },
-      ],
-    });
+    await postWebhook(adEvent("USER_A", 1700000000001));
     await sleep(30);
     expect(sender.sent).toHaveLength(0);
   });
 
-  it("模擬 API 不會真的送訊息也不會建立聯絡人", async () => {
+  it("alice 方案到期後：事件照記錄但不自動回覆；續約後恢復", async () => {
+    const alice = users.byEmail(db, "alice@example.com")!;
+    users.setTrialUntil(db, alice.id, new Date(Date.now() - 1000).toISOString());
     sender.sent.length = 0;
-    const r = await fetch(`${base}/api/simulate`, { method: "POST", headers: auth, body: JSON.stringify({ platform: "messenger", ad_id: "ANY" }) });
-    const j = (await r.json()) as { matched: { id: number } | null; messages: unknown[] };
-    expect(j.matched?.id).toBe(automationId);
-    expect(j.messages).toHaveLength(2);
-    expect(sender.sent).toHaveLength(0);
-    expect(contacts.find(db, 1, "SIMULATED_USER")).toBeUndefined();
-  });
-
-  it("一般訊息沒命中任何規則時不回覆，但仍記錄聯絡人", async () => {
-    sender.sent.length = 0;
-    await postWebhook({
-      object: "page",
-      entry: [{ id: PAGE_ID, messaging: [{ sender: { id: "USER_B" }, recipient: { id: PAGE_ID }, timestamp: 5, message: { mid: "x", text: "哈囉" } }] }],
-    });
+    await postWebhook(adEvent("USER_C", 1700000000003));
     await sleep(30);
     expect(sender.sent).toHaveLength(0);
-    expect(contacts.find(db, 1, "USER_B")).toBeDefined();
+    const ch = channels.byExternalId(db, PAGE_ID)!;
+    expect(contacts.find(db, ch.id, "USER_C")).toBeDefined();
+    const ev = (await call("alice", "GET", "/events")).body as unknown as { type: string; summary: string }[];
+    expect(ev.some((e) => e.type === "warning" && e.summary.includes("方案已到期"))).toBe(true);
+    expect((await call("alice", "GET", "/overview")).body.subscription).toMatchObject({ active: false, source: "expired" });
+
+    users.setPaidUntil(db, alice.id, new Date(Date.now() + 30 * 86400000).toISOString());
+    await postWebhook(adEvent("USER_D", 1700000000004));
+    await sleep(30);
+    expect(sender.sent).toHaveLength(2);
+  });
+
+  it("模擬 API 不送訊息、不建聯絡人、不建追蹤連結", async () => {
+    sender.sent.length = 0;
+    const before = links.list(db, users.byEmail(db, "alice@example.com")!.id).length;
+    const r = await call("alice", "POST", "/simulate", { platform: "messenger", ad_id: "ANY" });
+    expect((r.body.matched as { id: number }).id).toBe(aliceAutomation);
+    expect((r.body.messages as unknown[]).length).toBe(2);
+    expect(sender.sent).toHaveLength(0);
+    expect(links.list(db, users.byEmail(db, "alice@example.com")!.id).length).toBe(before);
   });
 });
 
-describe("對外網址自動判斷", () => {
-  it("未設定 public_url 時用請求的 X-Forwarded-* 推算", async () => {
-    settingsStore.remove(db, KEYS.publicUrl);
-    const r = await fetch(`${base}/api/overview`, { headers: { ...auth, "x-forwarded-proto": "https", "x-forwarded-host": "go.lakeze.com" } });
-    const j = (await r.json()) as { webhook_url: string };
-    expect(j.webhook_url).toBe("https://go.lakeze.com/webhook");
-    settingsStore.set(db, KEYS.publicUrl, "https://bot.example.com");
+describe("PayUni 付費流程", () => {
+  it("bob 結帳 → 拿到 UPP 表單 → 模擬 PayUni Notify → 方案延長", async () => {
+    const bill = (await call("bob", "GET", "/billing")).body;
+    expect(bill.payuni_configured).toBe(true);
+    const plan = (bill.plans as { id: number; price: number; months: number; code: string }[]).find((p) => p.code === "monthly")!;
+
+    const co = await call("bob", "POST", "/billing/checkout", { plan_id: plan.id });
+    expect(co.status).toBe(200);
+    expect(co.body.action).toBe("https://sandbox-api.payuni.com.tw/api/upp");
+    const fields = co.body.fields as Record<string, string>;
+    expect(fields.MerID).toBe("SHOP1");
+    expect(fields.HashInfo).toBe(hashInfo(PAYUNI, fields.EncryptInfo));
+    const orderNo = co.body.order_no as string;
+    expect(orders.byOrderNo(db, orderNo)!.status).toBe("pending");
+
+    // 金額不符要被拒絕
+    const wrong = encrypt(PAYUNI, toQueryString({ Status: "SUCCESS", MerTradeNo: orderNo, TradeNo: "T1", TradeAmt: 1, TradeStatus: 1 }));
+    const bad = await fetch(`${base}/payuni/notify`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ MerID: "SHOP1", Status: "SUCCESS", EncryptInfo: wrong, HashInfo: hashInfo(PAYUNI, wrong) }) });
+    expect(await bad.text()).toBe("金額不符");
+    expect(orders.byOrderNo(db, orderNo)!.status).toBe("pending");
+
+    // 正確通知
+    const enc = encrypt(PAYUNI, toQueryString({ Status: "SUCCESS", MerTradeNo: orderNo, TradeNo: "16661", TradeAmt: plan.price, TradeStatus: 1, PaymentType: "1" }));
+    const notify = await fetch(`${base}/payuni/notify`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ MerID: "SHOP1", Status: "SUCCESS", EncryptInfo: enc, HashInfo: hashInfo(PAYUNI, enc) }) });
+    expect(await notify.text()).toBe("SUCCESS");
+    const order = orders.byOrderNo(db, orderNo)!;
+    expect(order.status).toBe("paid");
+    expect(order.payuni_trade_no).toBe("16661");
+
+    const bob = users.byEmail(db, "bob@example.com")!;
+    const paidUntil = new Date(bob.paid_until!);
+    expect(paidUntil.getTime()).toBeGreaterThan(Date.now() + 27 * 86400000);
+    expect((await call("bob", "GET", "/billing")).body.subscription).toMatchObject({ source: "paid", active: true });
+
+    // ReturnURL 用同一包資料再打一次：不會重複入帳，且導回 billing 頁
+    const ret = await fetch(`${base}/payuni/return`, { method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ MerID: "SHOP1", Status: "SUCCESS", EncryptInfo: enc, HashInfo: hashInfo(PAYUNI, enc) }) });
+    expect(ret.status).toBe(302);
+    expect(ret.headers.get("location")).toBe("/#billing?paid=1");
+    expect(new Date(users.byEmail(db, "bob@example.com")!.paid_until!).getTime()).toBe(paidUntil.getTime());
+  });
+
+  it("驗章失敗的通知回 400；擁有者可手動延長與管理方案", async () => {
+    const r = await fetch(`${base}/payuni/notify`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ Status: "SUCCESS", EncryptInfo: "00", HashInfo: "bad" }) });
+    expect(r.status).toBe(400);
+
+    const bob = users.byEmail(db, "bob@example.com")!;
+    const before = new Date(bob.paid_until!).getTime();
+    expect((await call("bob", "POST", "/billing/grant", { user_id: bob.id, months: 1 })).status).toBe(403);
+    const g = await call("owner", "POST", "/billing/grant", { user_id: bob.id, months: 2 });
+    expect(g.status).toBe(200);
+    expect(new Date(users.get(db, bob.id)!.paid_until!).getTime()).toBeGreaterThan(before + 55 * 86400000);
+
+    const p = await call("owner", "POST", "/billing/plans", { code: "quarterly", name: "季繳", price: 2700, months: 3 });
+    expect(p.status).toBe(200);
+    expect((await call("owner", "POST", "/billing/plans", { code: "bad", name: "x", price: -1, months: 1 })).status).toBe(400);
+    const list = (await call("owner", "GET", "/billing/orders/all")).body as unknown as { email: string }[];
+    expect(list.some((o) => o.email === "bob@example.com")).toBe(true);
   });
 });

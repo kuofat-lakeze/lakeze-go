@@ -7,6 +7,7 @@ let seq = 1;
 function auto(partial: Partial<Automation>): Automation {
   return {
     id: seq++,
+    user_id: 1,
     name: partial.name ?? `a${seq}`,
     enabled: 1,
     priority: 0,
