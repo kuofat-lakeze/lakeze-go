@@ -1,0 +1,14 @@
+# Render.com 一鍵部署：連結 repo 後 Render 會自動讀這個檔
+services:
+  - type: web
+    name: lakeze-go
+    runtime: docker
+    plan: starter
+    healthCheckPath: /healthz
+    envVars:
+      - key: DATABASE_PATH
+        value: /data/app.db
+    disk:
+      name: lakeze-data
+      mountPath: /data
+      sizeGB: 1
