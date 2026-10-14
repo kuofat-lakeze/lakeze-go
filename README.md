@@ -30,6 +30,10 @@
 2. 看到「Blueprint」畫面，直接按 **Apply**（設定都寫在 `render.yaml`：Docker、1 GB 持久磁碟、Starter 方案約 US$7/月；Render 的免費方案不支援磁碟，資料會在重啟後消失）。
 3. 約 3 到 5 分鐘後會拿到一個 `https://lakeze-go-xxxx.onrender.com` 網址，打開就能設定密碼開始用。
 
+### Railway
+
+repo 內有 `railway.json`，用 Dockerfile 建置。在 Railway 新增專案 → Deploy from GitHub repo → 選 `lakeze-go`，然後到服務的 **Volumes** 掛一顆磁碟到 `/data`（否則重新部署後資料會消失）。Hobby 方案每月 5 美元含用量。
+
 ### Docker（自己的主機）
 
 ```bash
