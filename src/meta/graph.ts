@@ -123,6 +123,12 @@ export async function registerAppWebhook(
   await graphFetch(`${base(cfg)}/${cfg.appId}/subscriptions?${q}`, { method: "POST" }, f);
 }
 
+/** 用 App 權杖讀取 App 基本資料，用來驗證 App ID 與 App Secret 是否正確 */
+export async function verifyApp(cfg: MetaConfig, f = fetch): Promise<{ id: string; name: string }> {
+  const token = encodeURIComponent(`${cfg.appId}|${cfg.appSecret}`);
+  return graphFetch<{ id: string; name: string }>(`${base(cfg)}/${cfg.appId}?fields=id,name&access_token=${token}`, undefined, f);
+}
+
 export async function listAppWebhooks(cfg: MetaConfig, f = fetch): Promise<unknown> {
   return graphFetch(`${base(cfg)}/${cfg.appId}/subscriptions?access_token=${encodeURIComponent(`${cfg.appId}|${cfg.appSecret}`)}`, undefined, f);
 }

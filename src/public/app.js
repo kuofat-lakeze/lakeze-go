@@ -1,27 +1,86 @@
-/* Lakeze Go 後台（純 vanilla JS，無建置步驟） */
+/* Lakeze Go — client app (vanilla JS, no build step) */
 (() => {
-  const $ = (sel, root = document) => root.querySelector(sel);
-  const view = $("#view");
-  const state = { me: null, automations: [], channels: [], editing: null };
+  "use strict";
 
-  /* ---------- 小工具 ---------- */
+  /* =========================================================
+     Utilities
+     ========================================================= */
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
   const esc = (s) =>
     String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-  const fmtTime = (s) => {
-    if (!s) return "";
-    const d = s.includes("T") ? new Date(s) : new Date(s.replace(" ", "T") + "Z");
-    return d.toLocaleString("zh-TW", { hour12: false });
+  const parseTime = (s) => (!s ? null : s.includes("T") ? new Date(s) : new Date(s.replace(" ", "T") + "Z"));
+  const fmtDate = (s) => (s ? parseTime(s).toLocaleDateString("zh-TW", { year: "numeric", month: "short", day: "numeric" }) : "—");
+  const fmtTime = (s) => (s ? parseTime(s).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }) : "—");
+  const ago = (s) => {
+    if (!s) return "—";
+    const d = (Date.now() - parseTime(s).getTime()) / 1000;
+    if (d < 60) return "剛剛";
+    if (d < 3600) return `${Math.floor(d / 60)} 分鐘前`;
+    if (d < 86400) return `${Math.floor(d / 3600)} 小時前`;
+    if (d < 86400 * 7) return `${Math.floor(d / 86400)} 天前`;
+    return fmtDate(s);
   };
-  const fmtDate = (s) => (s ? new Date(s).toLocaleDateString("zh-TW") : "");
-  const money = (n) => `NT$${Number(n).toLocaleString("zh-TW")}`;
+  const money = (n) => `NT$${Number(n || 0).toLocaleString("zh-TW")}`;
+  const num = (n) => Number(n || 0).toLocaleString("zh-TW");
+  const isUrl = (u) => /^https?:\/\/[^\s/$.?#].[^\s]*$/i.test(String(u || "").trim());
+  const store = {
+    get(k) { try { return JSON.parse(localStorage.getItem(k) ?? "null"); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } },
+  };
+  const ukey = (k) => `lg:${state.me?.user?.id ?? 0}:${k}`;
+
+  const ICON_PATHS = {
+    home: '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>',
+    zap: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+    users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+    activity: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
+    plug: '<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>',
+    card: '<rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/>',
+    sliders: '<line x1="4" x2="4" y1="21" y2="14"/><line x1="4" x2="4" y1="10" y2="3"/><line x1="12" x2="12" y1="21" y2="12"/><line x1="12" x2="12" y1="8" y2="3"/><line x1="20" x2="20" y1="21" y2="16"/><line x1="20" x2="20" y1="12" y2="3"/><line x1="2" x2="6" y1="14" y2="14"/><line x1="10" x2="14" y1="8" y2="8"/><line x1="18" x2="22" y1="16" y2="16"/>',
+    shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+    user: '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+    logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/>',
+    plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+    check: '<polyline points="20 6 9 17 4 12"/>',
+    x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+    copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+    right: '<path d="m9 18 6-6-6-6"/>',
+    left: '<path d="m15 18-6-6 6-6"/>',
+    external: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+    play: '<polygon points="6 3 20 12 6 21 6 3"/>',
+    trash: '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>',
+    edit: '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>',
+    megaphone: '<path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>',
+    message: '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>',
+    hash: '<line x1="4" x2="20" y1="9" y2="9"/><line x1="4" x2="20" y1="15" y2="15"/><line x1="10" x2="8" y1="3" y2="21"/><line x1="16" x2="14" y1="3" y2="21"/>',
+    smile: '<circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" x2="9.01" y1="9" y2="9"/><line x1="15" x2="15.01" y1="9" y2="9"/>',
+    sparkles: '<path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/>',
+    alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+    info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
+    menu: '<line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/>',
+    refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+    flask: '<path d="M9 3h6"/><path d="M10 3v6.5L4.5 19a1.5 1.5 0 0 0 1.3 2.2h12.4a1.5 1.5 0 0 0 1.3-2.2L14 9.5V3"/>',
+    click: '<path d="m9 9 5 12 1.8-5.2L21 14Z"/><path d="M7.2 2.2 8 5.1"/><path d="m5.1 8-2.9-.8"/><path d="M14 4.1 12 6"/><path d="m6 12-1.9 2"/>',
+    link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+    facebook: '<path fill="currentColor" stroke="none" d="M14 8h3V4h-3c-2.8 0-5 2.2-5 5v2H7v4h2v7h4v-7h3l1-4h-4V9c0-.6.4-1 1-1z"/>',
+    instagram: '<rect width="20" height="20" x="2" y="2" rx="5"/><circle cx="12" cy="12" r="4"/><line x1="17.5" x2="17.51" y1="6.5" y2="6.5"/>',
+    receipt: '<path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 17.5v-11"/>',
+    book: '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/>',
+    rocket: '<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>',
+  };
+  const icon = (name) =>
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_PATHS[name] || ""}</svg>`;
+
   let toastTimer;
   function toast(msg, isErr = false) {
     const t = $("#toast");
-    t.textContent = msg;
+    t.innerHTML = `${icon(isErr ? "alert" : "check")}<span>${esc(msg)}</span>`;
     t.className = "toast" + (isErr ? " err" : "");
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => t.classList.add("hidden"), isErr ? 6000 : 3000);
+    toastTimer = setTimeout(() => t.classList.add("hidden"), isErr ? 6000 : 2800);
   }
+
   async function api(path, opts = {}) {
     const res = await fetch("/api" + path, {
       headers: { "content-type": "application/json" },
@@ -29,1042 +88,1495 @@
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     });
     if (res.status === 401 && !path.startsWith("/auth")) {
-      showGate();
+      state.me = { ...(state.me || {}), authenticated: false };
+      renderAuth("login");
       throw new Error("未登入");
     }
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    if (!res.ok) throw new Error(data.error || `發生錯誤（HTTP ${res.status}）`);
     return data;
   }
-  const copyable = (text) => `<code class="copy" title="點一下複製" data-copy="${esc(text)}">${esc(text)}</code>`;
+
+  /** 按鈕執行非同步動作時顯示 loading */
+  async function busy(btn, fn) {
+    if (!btn || btn.disabled) return;
+    const html = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner"></span>${btn.dataset.busy ? `<span>${esc(btn.dataset.busy)}</span>` : ""}`;
+    try {
+      return await fn();
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = html;
+    }
+  }
+
+  function modal({ title, body, foot = "", size = "" }) {
+    const wrap = document.createElement("div");
+    wrap.className = "modal-scrim";
+    wrap.innerHTML = `<div class="modal ${size}" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+      <div class="modal-head"><h3>${esc(title)}</h3><button class="btn btn-ghost icon-btn" data-close aria-label="關閉">${icon("x")}</button></div>
+      <div class="modal-body">${body}</div>${foot ? `<div class="modal-foot">${foot}</div>` : ""}</div>`;
+    const close = () => wrap.remove();
+    wrap.addEventListener("click", (e) => {
+      if (e.target === wrap || e.target.closest("[data-close]")) close();
+    });
+    document.addEventListener("keydown", function onKey(e) {
+      if (e.key === "Escape") {
+        close();
+        document.removeEventListener("keydown", onKey);
+      }
+    });
+    document.body.appendChild(wrap);
+    return { el: wrap, close };
+  }
+
+  function confirmDialog(title, text, okLabel = "確認", danger = false) {
+    return new Promise((resolve) => {
+      const m = modal({
+        title,
+        size: "sm",
+        body: `<p class="muted">${esc(text)}</p>`,
+        foot: `<button class="btn" data-close>取消</button><button class="btn ${danger ? "btn-danger" : "btn-primary"}" id="cf-ok">${esc(okLabel)}</button>`,
+      });
+      m.el.addEventListener("click", (e) => {
+        if (e.target.closest("[data-close]")) resolve(false);
+      });
+      $("#cf-ok", m.el).onclick = () => {
+        m.close();
+        resolve(true);
+      };
+    });
+  }
+
+  const copyField = (value) =>
+    `<div class="copy-field"><code>${esc(value)}</code><button type="button" data-copy="${esc(value)}">${icon("copy")}複製</button></div>`;
   document.addEventListener("click", (e) => {
     const c = e.target.closest("[data-copy]");
     if (!c) return;
-    navigator.clipboard?.writeText(c.dataset.copy).then(() => toast("已複製"));
-  });
-  const isOwner = () => state.me?.user?.role === "owner";
-
-  /* ---------- 登入 / 註冊 ---------- */
-  function showGate() {
-    $("#gate").classList.remove("hidden");
-    $("#shell").classList.add("hidden");
-  }
-  function showShell() {
-    $("#gate").classList.add("hidden");
-    $("#shell").classList.remove("hidden");
-    const u = state.me?.user;
-    $("#who").textContent = u ? `${u.name || u.email}${u.role === "owner" ? "（擁有者）" : ""}` : "";
-    document.querySelectorAll(".owner-only").forEach((el) => el.classList.toggle("hidden", !isOwner()));
-    document.querySelectorAll(".app-name").forEach((el) => (el.textContent = state.me?.app_name || "Lakeze Go"));
-    renderBanner();
-  }
-  function renderBanner() {
-    const b = $("#banner");
-    const sub = state.me?.user?.subscription;
-    if (!sub || sub.source === "owner") return b.classList.add("hidden");
-    b.classList.remove("hidden");
-    if (!sub.active) {
-      b.className = "banner err";
-      b.innerHTML = `⚠️ 你的方案已到期，自動回覆已暫停。<a href="#billing">立即續約 →</a>`;
-    } else if (sub.source === "trial") {
-      b.className = "banner" + (sub.days_left <= 3 ? " warn" : "");
-      b.innerHTML = `🎁 免費試用中，還有 ${sub.days_left} 天（${fmtDate(sub.until)} 到期）。<a href="#billing">查看方案 →</a>`;
-    } else if (sub.days_left <= 7) {
-      b.className = "banner warn";
-      b.innerHTML = `⏰ 方案將於 ${fmtDate(sub.until)} 到期（剩 ${sub.days_left} 天）。<a href="#billing">續約 →</a>`;
-    } else b.classList.add("hidden");
-  }
-  document.querySelectorAll(".tab").forEach((t) => {
-    t.onclick = () => {
-      document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x === t));
-      $("#login-form").classList.toggle("hidden", t.dataset.tab !== "login");
-      $("#signup-form").classList.toggle("hidden", t.dataset.tab !== "signup");
+    const done = () => {
+      const old = c.innerHTML;
+      c.innerHTML = `${icon("check")}已複製`;
+      setTimeout(() => (c.innerHTML = old), 1500);
     };
+    if (navigator.clipboard) navigator.clipboard.writeText(c.dataset.copy).then(done, () => toast("無法複製，請手動選取", true));
   });
-  async function afterAuth() {
-    state.me = await api("/auth/me");
-    showShell();
-    route();
+
+  const platformBadge = (p) =>
+    p === "instagram"
+      ? '<span class="badge instagram">Instagram</span>'
+      : p === "messenger"
+        ? '<span class="badge messenger">Messenger</span>'
+        : '<span class="badge">Messenger + IG</span>';
+
+  const state = { me: null, overview: null };
+  const isOwner = () => state.me?.user?.role === "owner";
+  const appName = () => state.me?.app_name || "Lakeze Go";
+
+  /* =========================================================
+     Auth
+     ========================================================= */
+  function renderAuth(mode) {
+    const me = state.me || {};
+    const first = me.needs_setup;
+    if (first) mode = "signup";
+    if (mode === "signup" && !first && me.allow_signup === false) mode = "login";
+    const trial = me.trial_days > 0 ? `${me.trial_days} 天免費試用，不需信用卡` : "立即開始使用";
+    $("#root").innerHTML = `
+      <div class="auth">
+        <div class="auth-main">
+          <img class="brand-logo" src="/brand/logo.png" alt="Lakeze 人客多" />
+          <div class="auth-form-wrap">
+            <form class="auth-form" id="auth-form" novalidate>
+              <h1>${mode === "signup" ? (first ? "建立平台擁有者帳號" : "建立你的帳號") : "歡迎回來"}</h1>
+              <p class="lead">${mode === "signup" ? (first ? "你是第一位註冊者，將成為這個平台的管理員。" : trial) : `登入 ${esc(appName())}`}</p>
+              <div class="stack">
+                ${mode === "signup" ? `<label class="field"><span class="label">名字或品牌名稱</span><input class="input" id="f-name" autocomplete="organization" placeholder="例如：小美咖啡"/></label>` : ""}
+                <label class="field"><span class="label">Email</span><input class="input" id="f-email" type="email" autocomplete="email" placeholder="you@company.com"/></label>
+                <label class="field"><span class="label">密碼</span><input class="input" id="f-password" type="password" autocomplete="${mode === "signup" ? "new-password" : "current-password"}" placeholder="${mode === "signup" ? "至少 8 個字元" : ""}"/></label>
+                <p class="error-text small" id="f-error" role="alert" style="color:var(--danger);min-height:1em"></p>
+                <button class="btn btn-primary btn-lg btn-block" type="submit">${mode === "signup" ? "建立帳號" : "登入"}</button>
+              </div>
+              ${!first && me.allow_signup !== false ? `<p class="auth-switch">${mode === "signup" ? '已經有帳號？<a data-mode="login">登入</a>' : '還沒有帳號？<a data-mode="signup">免費註冊</a>'}</p>` : ""}
+            </form>
+          </div>
+          <p class="auth-foot">© ${new Date().getFullYear()} Lakeze 人客多</p>
+        </div>
+        <aside class="auth-side">
+          <div class="auth-side-inner">
+            <h2>有人點了你的 Meta 廣告，<br/>3 秒內自動回覆，直接帶去下單頁。</h2>
+            <ul class="points">
+              <li>${icon("check")}<span>用 Facebook 登入，一鍵連接粉絲專頁與 Instagram</span></li>
+              <li>${icon("check")}<span>選好要導去的網址，自動回覆就設定完成</span></li>
+              <li>${icon("check")}<span>每一位從廣告來的客人、每一次點擊都看得到</span></li>
+            </ul>
+            ${phoneMock({
+              sys: "透過 Facebook 廣告開啟對話",
+              bubbles: [{ text: "嗨 小明 👋 謝謝你對我們的新品有興趣！點下方按鈕看完整介紹與優惠。", buttons: ["立即查看優惠"] }],
+            })}
+          </div>
+        </aside>
+      </div>`;
+    $$("[data-mode]").forEach((a) => (a.onclick = () => renderAuth(a.dataset.mode)));
+    $("#auth-form").onsubmit = async (e) => {
+      e.preventDefault();
+      const err = $("#f-error");
+      err.textContent = "";
+      const btn = e.submitter || $("#auth-form button[type=submit]");
+      const body = { email: $("#f-email").value.trim(), password: $("#f-password").value };
+      if (mode === "signup") body.name = $("#f-name").value.trim();
+      if (!body.email || !body.password) return (err.textContent = "請填寫 Email 與密碼");
+      try {
+        await busy(btn, () => api(`/auth/${mode}`, { method: "POST", body }));
+        state.me = await api("/auth/me");
+        const target = isOwner() && first ? "#setup" : location.hash || "#home";
+        if (location.hash !== target) history.replaceState(null, "", target);
+        startApp();
+      } catch (ex) {
+        err.textContent = ex.message;
+      }
+    };
+    setTimeout(() => (mode === "signup" ? $("#f-name") : $("#f-email"))?.focus(), 0);
   }
-  $("#login-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    $("#login-error").textContent = "";
-    try {
-      await api("/auth/login", { method: "POST", body: { email: $("#login-email").value, password: $("#login-password").value } });
-      await afterAuth();
-    } catch (err) {
-      $("#login-error").textContent = err.message;
+
+  /* =========================================================
+     Shell
+     ========================================================= */
+  const NAV = [
+    { id: "home", label: "首頁", icon: "home" },
+    { id: "automations", label: "自動回覆", icon: "zap" },
+    { id: "contacts", label: "聯絡人", icon: "users" },
+    { id: "connections", label: "連接帳號", icon: "plug" },
+    { id: "activity", label: "活動記錄", icon: "activity" },
+    { id: "billing", label: "方案與付款", icon: "card" },
+  ];
+  const ADMIN_NAV = [
+    { id: "setup", label: "平台設定", icon: "sliders" },
+    { id: "admin-users", label: "用戶", icon: "shield" },
+    { id: "admin-orders", label: "訂單", icon: "receipt" },
+  ];
+
+  function renderShell() {
+    const u = state.me.user;
+    const initials = (u.name || u.email).trim().slice(0, 1).toUpperCase();
+    $("#root").innerHTML = `
+      <div class="app">
+        <aside class="sidebar" id="sidebar">
+          <div class="sidebar-brand"><a href="#home"><img src="/brand/logo.png" alt="Lakeze 人客多"/></a></div>
+          <nav class="sidebar-nav" aria-label="主選單">
+            ${NAV.map((n) => `<a class="nav-item" href="#${n.id}" data-nav="${n.id}">${icon(n.icon)}<span>${n.label}</span></a>`).join("")}
+            ${isOwner() ? `<div class="nav-label">管理</div>${ADMIN_NAV.map((n) => `<a class="nav-item" href="#${n.id}" data-nav="${n.id}">${icon(n.icon)}<span>${n.label}</span></a>`).join("")}` : ""}
+          </nav>
+          <div class="sidebar-foot">
+            <div id="plan-chip"></div>
+            <div class="user-menu" id="user-menu" tabindex="0" role="button" aria-haspopup="menu">
+              <div class="avatar">${esc(initials)}</div>
+              <div class="who"><b>${esc(u.name || u.email)}</b><span>${esc(u.email)}</span></div>
+            </div>
+          </div>
+        </aside>
+        <div class="main">
+          <header class="topbar-mobile">
+            <button class="btn btn-ghost icon-btn" id="menu-btn" aria-label="開啟選單">${icon("menu")}</button>
+            <img src="/brand/logo.png" alt="Lakeze 人客多"/>
+            <span style="width:32px"></span>
+          </header>
+          <main id="page"></main>
+        </div>
+      </div>`;
+    renderPlanChip();
+    $("#menu-btn").onclick = () => toggleSidebar(true);
+    const um = $("#user-menu");
+    um.onclick = () => openUserMenu();
+    um.onkeydown = (e) => (e.key === "Enter" || e.key === " ") && openUserMenu();
+  }
+  function toggleSidebar(open) {
+    $("#sidebar").classList.toggle("open", open);
+    $(".scrim")?.remove();
+    if (open) {
+      const s = document.createElement("div");
+      s.className = "scrim";
+      s.onclick = () => toggleSidebar(false);
+      document.body.appendChild(s);
     }
-  });
-  $("#signup-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    $("#signup-error").textContent = "";
-    try {
-      await api("/auth/signup", {
-        method: "POST",
-        body: { name: $("#signup-name").value, email: $("#signup-email").value, password: $("#signup-password").value },
+  }
+  function openUserMenu() {
+    if ($("#user-pop")) return $("#user-pop").remove();
+    const pop = document.createElement("div");
+    pop.className = "menu";
+    pop.id = "user-pop";
+    pop.setAttribute("role", "menu");
+    pop.innerHTML = `<a href="#account" role="menuitem">${icon("user")}帳號設定</a><a href="#billing" role="menuitem">${icon("card")}方案與付款</a><button id="logout-btn" role="menuitem">${icon("logout")}登出</button>`;
+    $("#sidebar").appendChild(pop);
+    $("#logout-btn").onclick = async () => {
+      await api("/auth/logout", { method: "POST" });
+      state.me = await api("/auth/me");
+      renderAuth("login");
+    };
+    setTimeout(() => {
+      document.addEventListener("click", function off(e) {
+        if (!e.target.closest("#user-pop") && !e.target.closest("#user-menu")) {
+          pop.remove();
+          document.removeEventListener("click", off);
+        }
       });
-      await afterAuth();
-      if (isOwner()) location.hash = "#settings";
-    } catch (err) {
-      $("#signup-error").textContent = err.message;
-    }
-  });
-  $("#logout").addEventListener("click", async () => {
-    await api("/auth/logout", { method: "POST" });
-    state.me = null;
-    showGate();
-  });
-
-  /* ---------- 路由 ---------- */
-  const TRIGGER_LABEL = { ad: "指定廣告 ID", ref: "ref 參數", any_ad: "任何廣告點擊", keyword: "關鍵字", postback: "按鈕 payload", get_started: "開始使用", default: "預設回覆" };
-  const TRIGGER_HELP = {
-    ad: "填廣告 ID（可多個，用逗號分隔）。在廣告管理員的廣告層級可看到 ID；Meta 傳 webhook 時會帶 referral.ad_id。",
-    ref: "填 ref 值（可多個）。在廣告的「訊息範本 → 進階 → ref 參數」設定，或 m.me/你的專頁?ref=xxx 連結。支援前綴比對。",
-    any_ad: "只要是從任何 Meta 廣告點進來（referral.source = ADS）就觸發。適合當廣告的通用接待。",
-    keyword: "使用者訊息包含任一關鍵字即觸發（不分大小寫，多個用逗號分隔）。",
-    postback: "使用者按下「按鈕 / 快速回覆」時送回的 payload 完全相符即觸發。用來串多步驟流程。",
-    get_started: "新用戶第一次按「開始使用」且沒有廣告來源時觸發。",
-    default: "以上都沒命中時的兜底回覆（只對一般訊息生效）。",
-  };
-
-  function parseHash() {
-    const raw = (location.hash || "#overview").slice(1);
-    const [path, query = ""] = raw.split("?");
-    const parts = path.split("/");
-    return { page: parts[0], args: parts.slice(1), query: new URLSearchParams(query) };
+    }, 0);
   }
-  function route() {
+  function renderPlanChip() {
+    const el = $("#plan-chip");
+    if (!el) return;
+    const sub = state.me.user.subscription;
+    const total = state.me.trial_days || 14;
+    let html = "";
+    if (sub.source === "owner") html = `<div class="plan-chip"><div class="top"><span>平台擁有者</span><span class="badge brand">不限</span></div><div class="sub">所有功能皆可使用</div></div>`;
+    else if (sub.source === "trial")
+      html = `<a class="plan-chip" href="#billing" style="display:block;text-decoration:none;color:inherit"><div class="top"><span>免費試用</span><span class="muted">剩 ${sub.days_left} 天</span></div><div class="bar"><span style="width:${Math.max(4, Math.min(100, (sub.days_left / total) * 100))}%"></span></div><div class="sub">升級以在試用後繼續使用 →</div></a>`;
+    else if (sub.source === "paid") html = `<div class="plan-chip"><div class="top"><span>付費方案</span><span class="badge success">使用中</span></div><div class="sub">${fmtDate(sub.until)} 到期</div></div>`;
+    else html = `<a class="plan-chip" href="#billing" style="display:block;text-decoration:none;border-color:#f4c7c7;background:var(--danger-soft)"><div class="top" style="color:var(--danger)"><span>方案已到期</span></div><div class="sub" style="color:#8a1d1d">自動回覆已暫停，立即續約 →</div></a>`;
+    el.innerHTML = html;
+  }
+  async function refreshMe() {
+    state.me = await api("/auth/me");
+    renderPlanChip();
+  }
+
+  /* =========================================================
+     Router
+     ========================================================= */
+  const ALIASES = { overview: "home", channels: "connections", settings: "setup", events: "activity" };
+  function parseHash() {
+    const raw = (location.hash || "#home").slice(1);
+    const [path, query = ""] = raw.split("?");
+    const parts = path.split("/").filter(Boolean);
+    let page = parts[0] || "home";
+    page = ALIASES[page] || page;
+    return { page, args: parts.slice(1), query: new URLSearchParams(query) };
+  }
+  const PAGES = {};
+  async function route() {
+    if (!state.me?.authenticated) return;
     const { page, args, query } = parseHash();
-    document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.getAttribute("href") === "#" + page));
+    if (page === "simulate") {
+      location.hash = "#automations";
+      return openTestModal();
+    }
+    $$("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === page));
+    toggleSidebar(false);
+    $("#user-pop")?.remove();
     if (query.get("error")) toast(query.get("error"), true);
-    if (query.get("paid")) toast("付款成功，方案已延長 🎉");
-    const pages = { overview, automations, contacts, events, channels, simulate, billing, settings };
-    (pages[page] || overview)(...args, query).catch((err) => {
-      if (err.message !== "未登入") toast(err.message, true);
-    });
+    if (query.get("paid")) {
+      toast("付款成功，方案已延長 🎉");
+      refreshMe().catch(() => {});
+    }
+    const fn = PAGES[page] || PAGES.home;
+    const el = $("#page");
+    el.oninput = el.onchange = el.onclick = null;
+    try {
+      await fn(el, args, query);
+      window.scrollTo(0, 0);
+    } catch (err) {
+      if (err.message !== "未登入") {
+        el.innerHTML = `<div class="page narrow"><div class="card"><div class="empty"><div class="ic">${icon("alert")}</div><h3>頁面載入失敗</h3><p>${esc(err.message)}</p><div class="row"><button class="btn" onclick="location.reload()">${icon("refresh")}重新整理</button></div></div></div></div>`;
+      }
+    }
   }
   window.addEventListener("hashchange", route);
 
-  /* ---------- 總覽 ---------- */
-  async function overview() {
-    const o = await api("/overview");
-    const s = o.stats;
-    const steps = [
-      ...(isOwner() ? [{ done: o.app_configured, text: "在「平台設定」填入 Meta App ID 與 App Secret", link: "#settings" }] : []),
-      { done: o.channels.length > 0, text: "在「頻道」頁用 Facebook 登入連接粉絲專頁", link: "#channels" },
-      { done: s.automations > 0, text: "建立第一條自動化（廣告點擊 → 回覆 + 導購按鈕）", link: "#automations" },
-    ];
-    view.innerHTML = `
-      <div class="grid">
-        ${stat(s.contacts, "總聯絡人")}
-        ${stat(s.contacts_from_ads, "來自廣告")}
-        ${stat(s.contacts_today, "今日新增")}
-        ${stat(s.triggered, "自動化觸發次數")}
-        ${stat(s.link_clicks, "導購連結點擊")}
-        ${stat(s.automations, "啟用中的自動化")}
-      </div>
-      ${o.platform ? `<div class="card"><h2>平台概況</h2><div class="grid">${stat(o.platform.users, "註冊用戶")}${stat(o.platform.paying_users, "付費中用戶")}${stat(money(o.platform.revenue), "累計營收")}${stat(o.platform.channels, "已連接頻道")}</div></div>` : ""}
-      <div class="card">
-        <h2>上線進度</h2>
-        <ol class="steps-guide check-list">
-          ${steps.map((st) => `<li>${st.done ? "✅" : "⬜"} <a href="${st.link}">${st.text}</a></li>`).join("")}
-          <li>⬜ 在廣告管理員建立「訊息」目標（Click to Messenger / Instagram）的廣告，想分流不同廣告可用「ref 參數」或「廣告 ID」當觸發條件。</li>
-        </ol>
-        ${!o.app_configured && !isOwner() ? '<p class="hint">平台管理員尚未設定 Meta App，暫時無法連接粉絲專頁。</p>' : ""}
-      </div>
-      <div class="card">
-        <h2>已連接的頻道</h2>
-        ${o.channels.length ? `<div class="row">${o.channels.map((c) => `${platformBadge(c.platform)} <b>${esc(c.name)}</b>`).join('<span class="muted">·</span>')}</div>` : '<p class="muted">尚未連接任何粉絲專頁。<a href="#channels">前往連接 →</a></p>'}
-      </div>`;
-  }
-  const stat = (n, l) => `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`;
-  const platformBadge = (p) =>
-    p === "instagram" ? '<span class="badge ig">Instagram</span>' : p === "messenger" ? '<span class="badge fb">Messenger</span>' : '<span class="badge off">全部</span>';
+  const pageHead = (title, desc, actions = "") =>
+    `<div class="page-head"><div><h1>${esc(title)}</h1>${desc ? `<p>${desc}</p>` : ""}</div>${actions ? `<div class="row">${actions}</div>` : ""}</div>`;
+  const backLink = (href, label) => `<a class="back-link" href="${href}">${icon("left")}${esc(label)}</a>`;
+  const empty = (ic, title, text, actions = "") =>
+    `<div class="empty"><div class="ic">${icon(ic)}</div><h3>${esc(title)}</h3><p>${text}</p>${actions ? `<div class="row">${actions}</div>` : ""}</div>`;
 
-  /* ---------- 方案與付款 ---------- */
-  async function billing() {
-    const b = await api("/billing");
-    state.me.user.subscription = b.subscription;
-    renderBanner();
-    const sub = b.subscription;
-    const subText = {
-      owner: "平台擁有者，不受方案限制。",
-      paid: `付費方案使用中，到期日 ${fmtDate(sub.until)}（剩 ${sub.days_left} 天）。購買會從到期日往後累加。`,
-      trial: `免費試用中，到期日 ${fmtDate(sub.until)}（剩 ${sub.days_left} 天）。購買後從今天起算。`,
-      expired: `方案已於 ${fmtDate(sub.until)} 到期，自動回覆已暫停。`,
-      none: "尚未開通方案。",
-    }[sub.source];
-    view.innerHTML = `
-      <h2>方案與付款</h2>
-      <div class="card">
-        <h2>目前狀態 ${sub.active ? '<span class="badge ok">使用中</span>' : '<span class="badge err">已到期</span>'}</h2>
-        <p>${subText}</p>
-      </div>
-      <div class="card">
-        <h2>購買 / 續約</h2>
-        ${!b.payuni_configured ? '<p class="hint">平台尚未設定金流，暫時無法線上付款。請聯絡管理員。</p>' : b.payuni_sandbox ? '<p class="hint">⚠️ 目前為金流測試模式，不會真的扣款。</p>' : ""}
-        <div class="plans">
-          ${b.plans
+  /* =========================================================
+     Phone preview
+     ========================================================= */
+  function phoneMock({ sys, userText, bubbles }) {
+    const name = esc(state.me?.user?.name || "你的品牌");
+    return `<div class="phone">
+      <div class="phone-top"><div class="pa"><img src="/brand/mark.svg" alt=""/></div><div><b>${name}</b><span>通常會立即回覆</span></div></div>
+      <div class="phone-body">
+        ${sys ? `<div class="chat-sys">${icon("megaphone")}${esc(sys)}</div>` : ""}
+        ${userText ? `<div class="bubble-out">${esc(userText)}</div>` : ""}
+        ${(bubbles || []).map(renderBubble).join("") || '<div class="chat-meta">還沒有回覆內容</div>'}
+      </div></div>`;
+  }
+  function renderBubble(b) {
+    if (b.meta) return `<div class="chat-meta">${esc(b.meta)}</div>`;
+    if (b.image) return `<div class="bubble-in"><div class="chat-img" style="background-image:url('${esc(b.image)}')"></div></div>`;
+    const text = esc(b.text || "").trim() || '<span class="subtle">（訊息內容）</span>';
+    if (b.buttons?.length) {
+      return `<div class="bubble-in"><div class="bb card-bb"><div class="tx">${text}</div>${b.buttons.map((t) => `<span class="cb">${esc(t || "按鈕")}</span>`).join("")}</div></div>`;
+    }
+    return `<div class="bubble-in"><div class="bb">${text}</div>${b.quick?.length ? `<div class="qr-row">${b.quick.map((q) => `<span class="qr">${esc(q || "選項")}</span>`).join("")}</div>` : ""}</div>`;
+  }
+  const demoName = (s) => String(s || "").replace(/\{\{\s*(first_name|full_name)\s*\}\}/g, "小明").replace(/\{\{[^}]*\}\}/g, "");
+  function stepsToBubbles(steps) {
+    const out = [];
+    for (const s of steps || []) {
+      if (s.type === "text") out.push({ text: demoName(s.text) });
+      else if (s.type === "buttons") out.push({ text: demoName(s.text), buttons: (s.buttons || []).map((b) => demoName(b.title)) });
+      else if (s.type === "quick_replies") out.push({ text: demoName(s.text), quick: (s.replies || []).map((r) => demoName(r.title)) });
+      else if (s.type === "image") out.push({ image: s.url });
+      else if (s.type === "delay") out.push({ meta: `等待 ${s.seconds} 秒` });
+    }
+    return out;
+  }
+  function graphMessagesToBubbles(messages) {
+    return (messages || []).map((m) => {
+      if (m.attachment?.type === "template") return { text: m.attachment.payload.text, buttons: (m.attachment.payload.buttons || []).map((b) => b.title) };
+      if (m.attachment?.type === "image") return { image: m.attachment.payload.url };
+      return { text: m.text, quick: (m.quick_replies || []).map((q) => q.title) };
+    });
+  }
+
+  /* =========================================================
+     Home / onboarding
+     ========================================================= */
+  PAGES.home = async (el) => {
+    const o = await api("/overview");
+    state.overview = o;
+    const s = o.stats;
+    const tested = !!store.get(ukey("tested"));
+    const adDone = !!store.get(ukey("ad_done"));
+    const tasks = [
+      {
+        done: o.channels.length > 0,
+        title: "連接 Facebook 粉絲專頁",
+        desc: "用 Facebook 登入，選擇要自動回覆的專頁。有綁定的 Instagram 專業帳號會一起連上。",
+        action: o.app_configured
+          ? `<a class="btn btn-fb" href="/auth/facebook">${icon("facebook")}連接 Facebook</a>`
+          : isOwner()
+            ? `<a class="btn" href="#setup/meta">先完成平台設定</a>`
+            : `<span class="badge warning">等待平台管理員設定</span>`,
+      },
+      {
+        done: s.automations > 0,
+        title: "建立廣告自動回覆",
+        desc: "寫一句歡迎詞、放上要導去的網址，就完成了。",
+        action: `<a class="btn btn-primary" href="#automations/new/ad">${icon("plus")}建立</a>`,
+      },
+      {
+        done: tested,
+        title: "試跑一次",
+        desc: "模擬有人點了廣告，確認回覆內容和按鈕都正確。不會真的傳訊息。",
+        action: `<button class="btn" id="task-test">${icon("play")}開始測試</button>`,
+      },
+      {
+        done: adDone,
+        title: "投放「訊息」目標的廣告",
+        desc: `在廣告管理員建立 <b>互動 → 訊息</b> 目標的廣告，訊息應用程式選 Messenger 或 Instagram。<a href="https://adsmanager.facebook.com/" target="_blank" rel="noopener">開啟廣告管理員 ↗</a>`,
+        action: `<button class="btn" id="task-ad">${icon("check")}我已完成</button>`,
+      },
+    ];
+    const doneCount = tasks.filter((t) => t.done).length;
+    const firstOpen = tasks.findIndex((t) => !t.done);
+    const C = 2 * Math.PI * 19;
+    const allDone = doneCount === tasks.length;
+    const greeting = state.me.user.name ? `嗨，${esc(state.me.user.name)}` : "歡迎";
+
+    el.innerHTML = `<div class="page">
+      ${pageHead(greeting, allDone ? "一切就緒，以下是最近的成效。" : "跟著下面幾個步驟，大約 5 分鐘就能上線。")}
+      ${isOwner() && (!o.app_configured || !o.payuni_configured) ? `<div class="banner brand">${icon("sliders")}<div class="grow"><b>還有平台設定沒完成。</b> ${!o.app_configured ? "完成 Meta App 設定後，用戶才能連接粉絲專頁。" : "完成 PayUni 設定後，用戶才能線上付款。"}</div><a class="btn btn-sm btn-primary" href="#setup">前往設定</a></div>` : ""}
+      ${subBanner()}
+      <div class="stack">
+        ${allDone && store.get(ukey("hide_checklist")) ? "" : `
+        <div class="card">
+          <div class="checklist-head">
+            <svg class="progress-ring" viewBox="0 0 44 44"><circle class="bg" cx="22" cy="22" r="19"/><circle class="fg" cx="22" cy="22" r="19" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - doneCount / tasks.length)}" transform="rotate(-90 22 22)"/></svg>
+            <div style="flex:1"><div class="section-title">${allDone ? "全部完成 🎉" : "開始使用"}</div><div class="section-desc">已完成 ${doneCount} / ${tasks.length} 個步驟</div></div>
+            ${allDone ? `<button class="btn btn-ghost btn-sm" id="hide-checklist">隱藏</button>` : ""}
+          </div>
+          ${tasks
             .map(
-              (p) => `<div class="plan">
-                <div class="plan-name">${esc(p.name)}</div>
-                <div class="plan-price">${money(p.price)}</div>
-                <div class="muted small">${p.months} 個月${p.months > 1 ? `，平均每月 ${money(Math.round(p.price / p.months))}` : ""}</div>
-                <button class="btn primary" data-buy="${p.id}" ${b.payuni_configured ? "" : "disabled"}>${sub.source === "owner" ? "測試付款" : "購買"}</button>
+              (t, i) => `<div class="task ${t.done ? "done" : ""} ${i === firstOpen ? "current" : ""}">
+                <div class="num">${t.done ? icon("check") : i + 1}</div>
+                <div class="body"><div class="t">${t.title}</div><div class="d">${t.desc}</div></div>
+                ${t.done ? "" : `<div class="act">${t.action}</div>`}
               </div>`,
             )
-            .join("") || '<p class="muted">目前沒有可購買的方案。</p>'}
+            .join("")}
+        </div>`}
+        <div class="grid-4">
+          ${stat("今日新聯絡人", num(s.contacts_today))}
+          ${stat("來自廣告的聯絡人", num(s.contacts_from_ads))}
+          ${stat("自動回覆次數", num(s.triggered))}
+          ${stat("導購連結點擊", num(s.link_clicks))}
         </div>
-        <p class="muted small">付款由 PAYUNi 統一金流處理，支援信用卡等多種方式。付款完成後會自動回到這裡並延長方案。</p>
+        ${o.platform ? `<div class="card"><div class="card-head"><div><h3>平台概況</h3><p>所有用戶的總計</p></div><a class="btn btn-sm" href="#admin-users">查看用戶</a></div><div class="stat-row">${statPlain("註冊用戶", num(o.platform.users))}${statPlain("付費中用戶", num(o.platform.paying_users))}${statPlain("累計營收", money(o.platform.revenue))}${statPlain("已連接頻道", num(o.platform.channels))}</div></div>` : ""}
       </div>
-      <div class="card">
-        <h2>付款記錄</h2>
-        ${b.orders.length
-          ? `<table><thead><tr><th>時間</th><th>訂單編號</th><th>方案</th><th>金額</th><th>狀態</th></tr></thead><tbody>${b.orders
-              .map(
-                (o) => `<tr><td class="small">${fmtTime(o.created_at)}</td><td class="mono small">${esc(o.order_no)}</td><td>${esc(o.plan_name)}（${o.months} 個月）</td><td>${money(o.amount)}</td>
-                <td>${o.status === "paid" ? '<span class="badge ok">已付款</span>' : o.status === "failed" ? '<span class="badge err">失敗</span>' : '<span class="badge warn">未完成</span>'}</td></tr>`,
-              )
-              .join("")}</tbody></table>`
-          : '<p class="muted">尚無付款記錄。</p>'}
-      </div>`;
-    view.querySelectorAll("[data-buy]").forEach((btn) => {
-      btn.onclick = async () => {
-        btn.disabled = true;
+    </div>`;
+    $("#task-test") && ($("#task-test").onclick = () => openTestModal());
+    $("#task-ad") && ($("#task-ad").onclick = () => { store.set(ukey("ad_done"), true); PAGES.home(el); });
+    $("#hide-checklist") && ($("#hide-checklist").onclick = () => { store.set(ukey("hide_checklist"), true); PAGES.home(el); });
+  };
+  const stat = (k, v) => `<div class="card stat"><div class="k">${esc(k)}</div><div class="v">${v}</div></div>`;
+  const statPlain = (k, v) => `<div class="stat"><div class="k">${esc(k)}</div><div class="v">${v}</div></div>`;
+  function subBanner() {
+    const sub = state.me.user.subscription;
+    if (sub.source === "expired" || sub.source === "none")
+      return `<div class="banner danger">${icon("alert")}<div class="grow"><b>方案已到期，自動回覆已暫停。</b> 客人的訊息仍會被記錄，續約後立即恢復。</div><a class="btn btn-sm btn-primary" href="#billing">立即續約</a></div>`;
+    if (sub.source === "trial" && sub.days_left <= 3)
+      return `<div class="banner warning">${icon("info")}<div class="grow">免費試用剩 <b>${sub.days_left} 天</b>，升級後自動回覆不會中斷。</div><a class="btn btn-sm" href="#billing">查看方案</a></div>`;
+    if (sub.source === "paid" && sub.days_left <= 7)
+      return `<div class="banner warning">${icon("info")}<div class="grow">方案將於 <b>${fmtDate(sub.until)}</b> 到期。</div><a class="btn btn-sm" href="#billing">續約</a></div>`;
+    return "";
+  }
+
+  /* =========================================================
+     Automations
+     ========================================================= */
+  const TRIGGERS = {
+    any_ad: { t: "任何廣告點擊", d: "從任何一支訊息廣告點進來的人", tag: "推薦" },
+    ad: { t: "指定廣告", d: "只回應特定的廣告 ID", needs: "廣告 ID", ph: "例如 120211234567890，多個用逗號分隔", help: "在廣告管理員的廣告層級可以看到廣告 ID。" },
+    ref: { t: "廣告參數 ref", d: "依廣告裡設定的 ref 分流", needs: "ref 值", ph: "例如 spring_sale", help: "在廣告的「訊息範本 → 進階選項 → 參數」填入相同的值。" },
+    keyword: { t: "關鍵字", d: "訊息裡包含特定字詞", needs: "關鍵字", ph: "例如 價格, 多少錢, 優惠", help: "不分大小寫，多個用逗號分隔。" },
+    get_started: { t: "首次開啟對話", d: "新朋友按下「開始使用」" },
+    default: { t: "其他所有訊息", d: "沒有命中其他規則時的預設回覆" },
+    postback: { t: "按鈕回傳", d: "客人按下帶 payload 的按鈕", needs: "payload", ph: "例如 WANT_PRICE", help: "需和按鈕設定的 payload 完全相同。" },
+  };
+  const triggerSummary = (a) => {
+    const T = TRIGGERS[a.trigger_type];
+    return `${esc(T?.t || a.trigger_type)}${a.trigger_value ? `<span class="muted">：${esc(a.trigger_value)}</span>` : ""}`;
+  };
+
+  PAGES.automations = async (el, args) => {
+    if (args[0] === "new" && !args[1]) return renderTemplatePicker(el);
+    if (args[0] === "new") return renderEditor(el, { template: args[1] });
+    if (args[0] === "edit" && args[1]) return renderEditor(el, { id: Number(args[1]), advanced: args[2] === "advanced" });
+
+    const [list, o] = await Promise.all([api("/automations"), api("/overview")]);
+    state.overview = o;
+    el.innerHTML = `<div class="page">
+      ${pageHead("自動回覆", "客人點廣告或傳訊息時，自動送出的內容。", list.length ? `<button class="btn" id="open-test">${icon("play")}測試</button><a class="btn btn-primary" href="#automations/new">${icon("plus")}新增自動回覆</a>` : "")}
+      ${subBanner()}
+      ${o.channels.length === 0 ? `<div class="banner info">${icon("info")}<div class="grow">還沒連接粉絲專頁，自動回覆要連接後才會生效。</div><a class="btn btn-sm" href="#connections">連接帳號</a></div>` : ""}
+      ${list.length
+        ? `<div class="card"><div class="table-wrap"><table class="table"><thead><tr><th>名稱</th><th>觸發條件</th><th>平台</th><th class="nowrap">已觸發</th><th>啟用</th><th></th></tr></thead><tbody>
+          ${list
+            .map(
+              (a) => `<tr>
+              <td class="primary-cell"><a href="#automations/edit/${a.id}" style="color:inherit">${esc(a.name)}</a></td>
+              <td>${triggerSummary(a)}</td>
+              <td>${platformBadge(a.platform)}</td>
+              <td>${num(a.triggered_count)} 次</td>
+              <td><label class="switch" title="${a.enabled ? "已啟用" : "已停用"}"><input type="checkbox" data-toggle="${a.id}" ${a.enabled ? "checked" : ""} aria-label="啟用 ${esc(a.name)}"/><span class="slider"></span></label></td>
+              <td class="actions"><button class="btn btn-ghost btn-sm" data-test="${a.id}">${icon("play")}測試</button><a class="btn btn-ghost btn-sm" href="#automations/edit/${a.id}">${icon("edit")}編輯</a><button class="btn btn-ghost btn-sm btn-danger icon-btn" data-del="${a.id}" aria-label="刪除">${icon("trash")}</button></td>
+            </tr>`,
+            )
+            .join("")}</tbody></table></div></div>`
+        : `<div class="card">${empty("zap", "建立第一個自動回覆", "從範本開始最快。大部分人選「廣告點擊 → 導向網址」，只要填一句話和一個網址。", `<a class="btn btn-primary" href="#automations/new/ad">${icon("plus")}廣告點擊 → 導向網址</a><a class="btn" href="#automations/new">看其他範本</a>`)}</div>`}
+    </div>`;
+    $("#open-test") && ($("#open-test").onclick = () => openTestModal());
+    $$("[data-toggle]", el).forEach((inp) => {
+      inp.onchange = async () => {
         try {
-          const r = await api("/billing/checkout", { method: "POST", body: { plan_id: Number(btn.dataset.buy) } });
-          // 用隱藏表單 POST 到 PayUni 整合式支付頁
-          const form = document.createElement("form");
-          form.method = "POST";
-          form.action = r.action;
-          for (const [k, v] of Object.entries(r.fields)) {
-            const i = document.createElement("input");
-            i.type = "hidden";
-            i.name = k;
-            i.value = v;
-            form.appendChild(i);
-          }
-          document.body.appendChild(form);
-          form.submit();
+          await api(`/automations/${inp.dataset.toggle}/enabled`, { method: "PATCH", body: { enabled: inp.checked } });
+          toast(inp.checked ? "已啟用" : "已停用");
         } catch (err) {
+          inp.checked = !inp.checked;
           toast(err.message, true);
-          btn.disabled = false;
         }
       };
     });
+    $$("[data-test]", el).forEach((b) => (b.onclick = () => openTestModal(list.find((a) => a.id === Number(b.dataset.test)))));
+    $$("[data-del]", el).forEach((b) => {
+      b.onclick = async () => {
+        const a = list.find((x) => x.id === Number(b.dataset.del));
+        if (!(await confirmDialog("刪除自動回覆", `確定刪除「${a.name}」？這個動作無法復原。`, "刪除", true))) return;
+        await api(`/automations/${a.id}`, { method: "DELETE" });
+        toast("已刪除");
+        PAGES.automations(el, []);
+      };
+    });
+  };
+
+  const TEMPLATES = {
+    ad: {
+      icon: "click", color: "#fff3ec", fg: "#e95b17", title: "廣告點擊 → 導向網址", desc: "有人從廣告點進來，立刻回覆並附上前往網址的按鈕。", tag: "最常用",
+      data: { name: "廣告點擊自動回覆", trigger_type: "any_ad", message: "嗨 {{first_name}} 👋 謝謝你對我們的廣告有興趣！\n點下方按鈕看完整介紹與優惠。", buttons: [{ title: "立即查看", url: "" }], tag: "廣告名單" },
+    },
+    keyword: {
+      icon: "hash", color: "#eaf4fb", fg: "#1781c4", title: "關鍵字自動回覆", desc: "客人問到價格、地址等常見問題時自動回答。",
+      data: { name: "詢問價格", trigger_type: "keyword", trigger_value: "價格, 多少錢, 費用", message: "{{first_name}} 你好！價格與方案都整理在這裡 👇", buttons: [{ title: "查看價格", url: "" }], tag: "" },
+    },
+    welcome: {
+      icon: "smile", color: "#e9f7f7", fg: "#2f9a9e", title: "歡迎訊息", desc: "第一次開啟對話的新朋友會收到這則訊息。",
+      data: { name: "歡迎訊息", trigger_type: "get_started", message: "歡迎 {{first_name}}！我們是 {{brand}}，有任何問題都可以直接留言 😊", buttons: [], tag: "" },
+    },
+    blank: { icon: "sparkles", color: "#f3f3f5", fg: "#4a4a55", title: "從空白開始", desc: "多則訊息、快速回覆、延遲、分支流程等進階設定。", data: null },
+  };
+
+  function renderTemplatePicker(el) {
+    el.innerHTML = `<div class="page">
+      ${backLink("#automations", "自動回覆")}
+      ${pageHead("選擇範本", "之後都可以再修改。")}
+      <div class="grid-2">
+        ${Object.entries(TEMPLATES)
+          .map(
+            ([k, t]) => `<a class="tpl" href="#automations/new/${k}">
+              ${t.tag ? `<span class="badge brand tag">${t.tag}</span>` : ""}
+              <div class="ic" style="background:${t.color};color:${t.fg}">${icon(t.icon)}</div>
+              <div class="t">${t.title}</div><div class="d">${t.desc}</div>
+            </a>`,
+          )
+          .join("")}
+      </div></div>`;
   }
 
-  /* ---------- 平台設定（擁有者） ---------- */
-  async function settings(tab) {
-    if (!isOwner()) return (location.hash = "#overview");
-    const [s, plans, usersList, allOrders] = await Promise.all([api("/settings"), api("/billing/plans"), api("/users"), api("/billing/orders/all")]);
-    view.innerHTML = `
-      <h2>平台設定</h2>
-      <div class="card">
-        <h2>1. 基本</h2>
-        <div class="three">
-          <label class="field"><span>平台名稱</span><input type="text" id="s-app-name" value="${esc(s.app_name)}"/></label>
-          <label class="field"><span>免費試用天數</span><input type="number" id="s-trial" min="0" max="365" value="${s.trial_days}"/></label>
-          <label class="field"><span>開放註冊</span><select id="s-signup"><option value="1" ${s.allow_signup ? "selected" : ""}>開放</option><option value="0" ${!s.allow_signup ? "selected" : ""}>關閉（僅現有用戶可登入）</option></select></label>
-        </div>
-        <label class="field"><span>對外網址（留空會依請求自動判斷，目前為 ${esc(s.resolved_public_url)}）</span><input type="url" id="s-public-url" value="${esc(s.public_url)}" placeholder="https://go.example.com"/></label>
-      </div>
+  /* ---- simple <-> automation mapping ---- */
+  function simpleToAutomation(f) {
+    const steps = [];
+    const buttons = f.buttons.filter((b) => b.title.trim() || b.url.trim());
+    if (buttons.length) steps.push({ type: "buttons", text: f.message, buttons: buttons.map((b) => ({ type: "url", title: b.title.trim(), url: b.url.trim(), track: true })) });
+    else steps.push({ type: "text", text: f.message });
+    if (f.tag.trim()) steps.push({ type: "tag", tag: f.tag.trim() });
+    return {
+      name: f.name.trim() || TRIGGERS[f.trigger_type].t,
+      enabled: f.enabled,
+      priority: f.priority,
+      platform: f.platform,
+      channel_id: null,
+      trigger_type: f.trigger_type,
+      trigger_value: TRIGGERS[f.trigger_type].needs ? f.trigger_value.trim() : "",
+      steps,
+    };
+  }
+  function automationToSimple(a) {
+    const tags = a.steps.filter((s) => s.type === "tag");
+    const rest = a.steps.filter((s) => s.type !== "tag");
+    if (tags.length > 1 || rest.length !== 1 || a.channel_id || a.trigger_type === "postback") return null;
+    const s = rest[0];
+    if (s.type === "buttons" && s.buttons.some((b) => b.type !== "url")) return null;
+    if (s.type !== "text" && s.type !== "buttons") return null;
+    return {
+      id: a.id,
+      name: a.name,
+      enabled: a.enabled ? 1 : 0,
+      priority: a.priority,
+      platform: a.platform,
+      trigger_type: a.trigger_type,
+      trigger_value: a.trigger_value,
+      message: s.text,
+      buttons: s.type === "buttons" ? s.buttons.map((b) => ({ title: b.title, url: b.url })) : [],
+      tag: tags[0]?.tag || "",
+    };
+  }
 
-      <div class="card">
-        <h2>2. Meta App</h2>
-        <div class="hint">
-          到 <a href="https://developers.facebook.com/apps/" target="_blank" rel="noopener">Meta 開發者後台</a> 建立「商家」類型的 App，加入 <b>Facebook 登入</b>、<b>Messenger</b>、<b>Instagram</b> 產品。所有用戶都會用這個 App 連接他們的粉絲專頁。
-        </div>
-        <div class="two">
-          <label class="field"><span>App ID</span><input type="text" id="s-app-id" value="${esc(s.meta_app_id)}"/></label>
-          <label class="field"><span>App Secret ${s.meta_app_secret_set ? `<span class="badge ok">已設定 ${esc(s.meta_app_secret_masked)}</span>` : '<span class="badge warn">未設定</span>'}</span><input type="password" id="s-app-secret" placeholder="${s.meta_app_secret_set ? "留空代表不更改" : "貼上 App Secret"}"/></label>
-        </div>
-        <div class="two">
-          <label class="field"><span>Graph API 版本</span><input type="text" id="s-graph" value="${esc(s.graph_version)}"/></label>
-          <label class="field"><span>Webhook 驗證權杖（自動產生）</span><input type="text" id="s-verify" value="${esc(s.verify_token)}"/></label>
-        </div>
-        <table>
-          <tr><th style="width:240px">Facebook 登入 → 有效的 OAuth 重新導向 URI</th><td>${copyable(s.oauth_redirect_url)}</td></tr>
-          <tr><th>Webhook 回呼網址</th><td>${copyable(s.webhook_url)}</td></tr>
-          <tr><th>Webhook 驗證權杖</th><td>${copyable(s.verify_token)}</td></tr>
-          <tr><th>Webhook 訂閱欄位</th><td>${s.webhook_fields.map((f) => `<code>${f}</code>`).join(" ")}</td></tr>
-        </table>
-        <div class="row" style="margin-top:8px">
-          <button class="btn" id="s-register">⚡ 自動向 Meta 登記 Webhook</button>
-          <button class="btn ghost" id="s-status">查看登記狀態</button>
-        </div>
-        <pre class="json hidden" id="s-register-result"></pre>
-      </div>
+  async function renderEditor(el, { id, template, advanced }) {
+    let a = null;
+    if (id) a = await api(`/automations/${id}`);
+    let simple = null;
+    if (a && !advanced) simple = automationToSimple(a);
+    if (!a && template && template !== "blank" && TEMPLATES[template]) {
+      const d = TEMPLATES[template].data;
+      simple = { enabled: 1, priority: template === "ad" ? 10 : 0, platform: "any", trigger_value: "", ...JSON.parse(JSON.stringify(d)) };
+      simple.message = simple.message.replace("{{brand}}", state.me.user.name || "我們");
+    }
+    if (simple) return renderSimpleEditor(el, simple, a);
+    const adv = a ? JSON.parse(JSON.stringify(a)) : { name: "", enabled: 1, priority: 0, platform: "any", channel_id: null, trigger_type: "any_ad", trigger_value: "", steps: [{ type: "text", text: "" }] };
+    return renderAdvancedEditor(el, adv);
+  }
 
-      <div class="card">
-        <h2>3. PAYUNi 統一金流</h2>
-        <div class="hint">到 <a href="https://www.payuni.com.tw/" target="_blank" rel="noopener">PAYUNi</a> 商店後台「串接資訊」取得商店代號、Hash Key、Hash IV。測試模式用測試區帳號。</div>
-        <div class="three">
-          <label class="field"><span>商店代號 MerID</span><input type="text" id="s-pu-mer" value="${esc(s.payuni_mer_id)}"/></label>
-          <label class="field"><span>Hash Key（32 字元）${s.payuni_hash_key_set ? '<span class="badge ok">已設定</span>' : ""}</span><input type="password" id="s-pu-key" placeholder="${s.payuni_hash_key_set ? "留空代表不更改" : ""}"/></label>
-          <label class="field"><span>Hash IV（16 字元）${s.payuni_hash_iv_set ? '<span class="badge ok">已設定</span>' : ""}</span><input type="password" id="s-pu-iv" placeholder="${s.payuni_hash_iv_set ? "留空代表不更改" : ""}"/></label>
+  function renderSimpleEditor(el, f, original) {
+    const isNew = !f.id;
+    if (!f.buttons) f.buttons = [];
+    el.innerHTML = `<div class="page">
+      ${backLink("#automations", "自動回覆")}
+      ${pageHead(isNew ? "新增自動回覆" : "編輯自動回覆", isNew ? "填好下面兩個區塊就能使用，右邊會即時預覽客人看到的畫面。" : "")}
+      <div class="editor">
+        <div>
+          <div class="card">
+            <div class="form-section">
+              <div class="sec-head"><div class="sec-num">1</div><div><div class="section-title">什麼時候回覆？</div><div class="section-desc">選擇觸發這則回覆的情況。</div></div></div>
+              <div class="choice-grid" id="trig-choices">
+                ${["any_ad", "ad", "ref", "keyword", "get_started", "default"]
+                  .map(
+                    (k) => `<label class="choice ${f.trigger_type === k ? "selected" : ""}">
+                      <input type="radio" name="trig" value="${k}" ${f.trigger_type === k ? "checked" : ""}/>
+                      ${TRIGGERS[k].tag ? `<span class="badge brand tag">${TRIGGERS[k].tag}</span>` : ""}
+                      <span class="dot"></span><span><div class="t">${TRIGGERS[k].t}</div><div class="d">${TRIGGERS[k].d}</div></span>
+                    </label>`,
+                  )
+                  .join("")}
+              </div>
+              <div id="trig-value-wrap" style="margin-top:14px"></div>
+            </div>
+            <div class="form-section">
+              <div class="sec-head"><div class="sec-num">2</div><div><div class="section-title">回覆什麼？</div><div class="section-desc">一則訊息，加上帶客人前往網址的按鈕。</div></div></div>
+              <div class="stack">
+                <label class="field"><span class="label">訊息內容</span>
+                  <textarea class="input" id="s-message" maxlength="640" placeholder="嗨 {{first_name}}，謝謝你的詢問！">${esc(f.message)}</textarea>
+                  <span class="row"><span class="small muted">插入：</span><span class="var-chips"><button type="button" class="var-chip" data-var="{{first_name}}">客人名字</button><button type="button" class="var-chip" data-var="{{full_name}}">客人全名</button></span></span>
+                  <span class="error-text" id="e-message"></span>
+                </label>
+                <div id="btn-list" class="stack-sm"></div>
+                <div><button type="button" class="btn btn-sm" id="add-btn">${icon("plus")}新增按鈕</button> <span class="small muted" id="btn-hint"></span></div>
+              </div>
+            </div>
+            <div class="form-section">
+              <details class="adv" ${original ? "" : ""}>
+                <summary>${icon("right")}更多設定（選填）</summary>
+                <div class="stack" style="margin-top:16px">
+                  <div class="grid-2">
+                    <label class="field"><span class="label">名稱</span><input class="input" id="s-name" value="${esc(f.name)}" placeholder="給自己看的名字"/></label>
+                    <label class="field"><span class="label">平台</span><select class="input" id="s-platform">
+                      <option value="any" ${f.platform === "any" ? "selected" : ""}>Messenger 與 Instagram</option>
+                      <option value="messenger" ${f.platform === "messenger" ? "selected" : ""}>只有 Messenger</option>
+                      <option value="instagram" ${f.platform === "instagram" ? "selected" : ""}>只有 Instagram</option>
+                    </select></label>
+                  </div>
+                  <div class="grid-2">
+                    <label class="field"><span class="label">幫客人加上標籤</span><input class="input" id="s-tag" value="${esc(f.tag)}" placeholder="例如：春季活動"/><span class="help">方便在聯絡人頁面篩選。</span></label>
+                    <label class="field"><span class="label">優先順序</span><input class="input" type="number" id="s-priority" value="${f.priority}"/><span class="help">同時符合多個規則時，數字大的先用。</span></label>
+                  </div>
+                  <div><a class="small" href="#automations/${original ? `edit/${original.id}/advanced` : "new/blank"}" id="to-advanced">切換到進階編輯器（多則訊息、快速回覆、延遲）→</a></div>
+                </div>
+              </details>
+            </div>
+          </div>
+          <div class="sticky-actions">
+            <a class="btn" href="#automations">取消</a>
+            ${original ? `<button class="btn" id="s-test">${icon("play")}測試</button>` : ""}
+            <button class="btn btn-primary" id="s-save" data-busy="儲存中">${icon("check")}${isNew ? "儲存並啟用" : "儲存變更"}</button>
+          </div>
         </div>
-        <label class="switch"><input type="checkbox" id="s-pu-sandbox" ${s.payuni_sandbox ? "checked" : ""}/> 測試模式（連 sandbox-api.payuni.com.tw，不會真的扣款）</label>
-        <table style="margin-top:12px">
-          <tr><th style="width:240px">NotifyURL（伺服器通知）</th><td>${copyable(s.payuni_notify_url)}</td></tr>
-          <tr><th>ReturnURL（付款後導回）</th><td>${copyable(s.payuni_return_url)}</td></tr>
-        </table>
-        <p class="muted small">這兩個網址會隨每筆交易送給 PayUni，不需要在 PayUni 後台另外設定；若後台有「通知網址」欄位，填相同值即可。</p>
-      </div>
+        <div class="preview-col"><div class="small muted" style="margin-bottom:8px;font-weight:500">客人會看到</div><div id="preview"></div></div>
+      </div></div>`;
 
-      <div class="row" style="margin-bottom:16px"><button class="btn primary" id="s-save">儲存以上設定</button></div>
+    const renderTrigValue = () => {
+      const T = TRIGGERS[f.trigger_type];
+      $("#trig-value-wrap").innerHTML = T.needs
+        ? `<label class="field"><span class="label">${T.needs}</span><input class="input" id="s-tv" value="${esc(f.trigger_value)}" placeholder="${esc(T.ph)}"/><span class="help">${T.help}</span><span class="error-text" id="e-tv"></span></label>`
+        : f.trigger_type === "any_ad"
+          ? `<p class="small muted">${icon("info").replace("<svg", '<svg style="width:14px;height:14px;vertical-align:-2px"')} 如果同時有「指定廣告」的規則，會優先使用指定的那一個。</p>`
+          : "";
+      const tv = $("#s-tv");
+      if (tv) tv.oninput = () => { f.trigger_value = tv.value; preview(); };
+    };
+    const renderButtons = () => {
+      $("#btn-list").innerHTML = f.buttons
+        .map(
+          (b, i) => `<div class="card" style="box-shadow:none;background:var(--surface-2)"><div class="card-body" style="padding:14px 16px">
+            <div class="row between" style="margin-bottom:10px"><b class="small">按鈕 ${i + 1}</b><button type="button" class="btn btn-ghost btn-sm icon-btn" data-rm="${i}" aria-label="移除按鈕">${icon("x")}</button></div>
+            <div class="grid-2">
+              <label class="field"><span class="label">按鈕文字</span><div class="input-group"><input class="input" data-bt="${i}" maxlength="20" value="${esc(b.title)}" placeholder="立即查看"/><span class="counter" data-cnt="${i}">${b.title.length}/20</span></div></label>
+              <label class="field"><span class="label">前往網址</span><input class="input" data-bu="${i}" type="url" inputmode="url" value="${esc(b.url)}" placeholder="https://your-site.com/landing"/><span class="error-text" data-eu="${i}"></span></label>
+            </div></div></div>`,
+        )
+        .join("");
+      $("#add-btn").classList.toggle("hidden", f.buttons.length >= 3);
+      $("#btn-hint").textContent = f.buttons.length ? "" : "沒有按鈕就只會送出文字。";
+      $$("[data-bt]").forEach((inp) => (inp.oninput = () => { f.buttons[inp.dataset.bt].title = inp.value; $(`[data-cnt="${inp.dataset.bt}"]`).textContent = `${inp.value.length}/20`; preview(); }));
+      $$("[data-bu]").forEach((inp) => (inp.oninput = () => { f.buttons[inp.dataset.bu].url = inp.value; inp.classList.remove("invalid"); $(`[data-eu="${inp.dataset.bu}"]`).textContent = ""; }));
+      $$("[data-rm]").forEach((b) => (b.onclick = () => { f.buttons.splice(Number(b.dataset.rm), 1); renderButtons(); preview(); }));
+    };
+    const preview = () => {
+      const T = f.trigger_type;
+      const sys = T === "any_ad" || T === "ad" || T === "ref" ? "透過廣告開啟對話" : T === "get_started" ? "按下「開始使用」" : null;
+      const userText = T === "keyword" ? (f.trigger_value.split(/[,，]/)[0] || "").trim() || "關鍵字" : T === "default" ? "你好" : null;
+      $("#preview").innerHTML = phoneMock({ sys, userText, bubbles: [{ text: demoName(f.message), buttons: f.buttons.map((b) => b.title) }] });
+    };
 
-      <div class="card">
-        <h2>4. 方案</h2>
-        <table><thead><tr><th>代碼</th><th>名稱</th><th>價格 (NT$)</th><th>月數</th><th>排序</th><th>上架</th><th></th></tr></thead><tbody id="plan-rows">
-          ${plans.map((p) => planRow(p)).join("")}
-          ${planRow({ id: "", code: "", name: "", price: "", months: "", sort: plans.length + 1, active: 1 }, true)}
-        </tbody></table>
-      </div>
+    $$("#trig-choices input").forEach((r) => {
+      r.onchange = () => {
+        f.trigger_type = r.value;
+        $$("#trig-choices .choice").forEach((c) => c.classList.toggle("selected", c.contains(r)));
+        renderTrigValue();
+        preview();
+      };
+    });
+    const msg = $("#s-message");
+    msg.oninput = () => { f.message = msg.value; $("#e-message").textContent = ""; msg.classList.remove("invalid"); preview(); };
+    $$("[data-var]").forEach((c) => {
+      c.onclick = () => {
+        const start = msg.selectionStart ?? msg.value.length;
+        msg.value = msg.value.slice(0, start) + c.dataset.var + msg.value.slice(msg.selectionEnd ?? start);
+        msg.focus();
+        msg.selectionStart = msg.selectionEnd = start + c.dataset.var.length;
+        msg.oninput();
+      };
+    });
+    $("#add-btn").onclick = () => { f.buttons.push({ title: "", url: "" }); renderButtons(); preview(); $(`[data-bt="${f.buttons.length - 1}"]`)?.focus(); };
+    $("#s-name").oninput = (e) => (f.name = e.target.value);
+    $("#s-platform").onchange = (e) => (f.platform = e.target.value);
+    $("#s-tag").oninput = (e) => (f.tag = e.target.value);
+    $("#s-priority").oninput = (e) => (f.priority = Number(e.target.value) || 0);
+    if (!original) {
+      $("#to-advanced").onclick = (e) => {
+        e.preventDefault();
+        renderAdvancedEditor(el, { ...simpleToAutomation(f), id: undefined });
+      };
+    }
+    $("#s-test") && ($("#s-test").onclick = () => openTestModal(original));
 
-      <div class="card">
-        <h2>5. 用戶</h2>
-        <table><thead><tr><th>Email</th><th>名稱</th><th>角色</th><th>方案狀態</th><th>頻道 / 自動化</th><th>手動延長</th></tr></thead><tbody>
-          ${usersList
+    const validate = () => {
+      let ok = true;
+      if (!f.message.trim()) { $("#e-message").textContent = "請輸入訊息內容"; msg.classList.add("invalid"); ok = false; }
+      if (TRIGGERS[f.trigger_type].needs && !f.trigger_value.trim()) { $("#e-tv").textContent = `請填寫${TRIGGERS[f.trigger_type].needs}`; $("#s-tv").classList.add("invalid"); ok = false; }
+      f.buttons.forEach((b, i) => {
+        if (!b.title.trim() && !b.url.trim()) return;
+        if (!b.title.trim()) { $(`[data-bt="${i}"]`).classList.add("invalid"); ok = false; }
+        if (!isUrl(b.url)) { $(`[data-eu="${i}"]`).textContent = "請輸入完整網址，例如 https://your-site.com"; $(`[data-bu="${i}"]`).classList.add("invalid"); ok = false; }
+      });
+      return ok;
+    };
+    $("#s-save").onclick = (e) =>
+      busy(e.currentTarget, async () => {
+        if (!validate()) return toast("有欄位需要修正", true);
+        const body = simpleToAutomation(f);
+        body.enabled = f.id ? !!f.enabled : true;
+        try {
+          if (f.id) await api(`/automations/${f.id}`, { method: "PUT", body });
+          else await api("/automations", { method: "POST", body });
+          toast(f.id ? "已儲存" : "自動回覆已啟用");
+          location.hash = "#automations";
+        } catch (err) {
+          toast(err.message, true);
+        }
+      });
+
+    renderTrigValue();
+    renderButtons();
+    preview();
+  }
+
+  /* ---- advanced editor ---- */
+  const STEP_LABEL = { text: "文字訊息", buttons: "文字 + 按鈕", quick_replies: "快速回覆", image: "圖片", delay: "等待", tag: "加標籤", goto: "接續另一個自動回覆" };
+  async function renderAdvancedEditor(el, a) {
+    const [all, chans] = await Promise.all([api("/automations"), api("/channels")]);
+    const isNew = !a.id;
+    const simpleOk = automationToSimple({ ...a, steps: a.steps || [] });
+    el.innerHTML = `<div class="page">
+      ${backLink("#automations", "自動回覆")}
+      ${pageHead(isNew ? "新增自動回覆（進階）" : "編輯自動回覆（進階）", "可以組合多則訊息、快速回覆、延遲與分支。", simpleOk && a.id ? `<a class="btn btn-sm" href="#automations/edit/${a.id}">切換到簡易模式</a>` : "")}
+      <div class="editor">
+        <div>
+          <div class="card">
+            <div class="form-section">
+              <div class="grid-2">
+                <label class="field"><span class="label">名稱</span><input class="input" data-p="name" value="${esc(a.name)}"/></label>
+                <label class="field"><span class="label">觸發條件</span><select class="input" data-p="trigger_type">${Object.entries(TRIGGERS).map(([k, t]) => `<option value="${k}" ${a.trigger_type === k ? "selected" : ""}>${t.t}</option>`).join("")}</select></label>
+              </div>
+              <div id="adv-tv" style="margin-top:14px"></div>
+              <div class="grid-3" style="margin-top:14px">
+                <label class="field"><span class="label">平台</span><select class="input" data-p="platform"><option value="any" ${a.platform === "any" ? "selected" : ""}>全部</option><option value="messenger" ${a.platform === "messenger" ? "selected" : ""}>Messenger</option><option value="instagram" ${a.platform === "instagram" ? "selected" : ""}>Instagram</option></select></label>
+                <label class="field"><span class="label">限定頻道</span><select class="input" data-p="channel_id"><option value="">不限</option>${chans.map((c) => `<option value="${c.id}" ${a.channel_id === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label>
+                <label class="field"><span class="label">優先順序</span><input class="input" type="number" data-p="priority" value="${a.priority}"/></label>
+              </div>
+            </div>
+            <div class="form-section">
+              <div class="row between" style="margin-bottom:14px"><div class="section-title">回覆步驟</div>
+                <div class="row"><select class="input" id="add-type" style="width:auto;height:32px">${Object.entries(STEP_LABEL).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select><button class="btn btn-sm" id="add-step">${icon("plus")}加入</button></div></div>
+              <div id="steps"></div>
+            </div>
+          </div>
+          <div class="sticky-actions"><a class="btn" href="#automations">取消</a><button class="btn btn-primary" id="adv-save" data-busy="儲存中">${icon("check")}儲存</button></div>
+        </div>
+        <div class="preview-col"><div class="small muted" style="margin-bottom:8px;font-weight:500">客人會看到</div><div id="preview"></div></div>
+      </div></div>`;
+
+    const preview = () => ($("#preview").innerHTML = phoneMock({ sys: ["any_ad", "ad", "ref"].includes(a.trigger_type) ? "透過廣告開啟對話" : null, bubbles: stepsToBubbles(a.steps) }));
+    const renderTv = () => {
+      const T = TRIGGERS[a.trigger_type];
+      $("#adv-tv").innerHTML = T.needs ? `<label class="field"><span class="label">${T.needs}</span><input class="input" data-p="trigger_value" value="${esc(a.trigger_value)}" placeholder="${esc(T.ph)}"/><span class="help">${T.help}</span></label>` : "";
+    };
+    const renderSteps = () => {
+      $("#steps").innerHTML = a.steps.map((s, i) => stepCard(s, i, all.filter((x) => x.id !== a.id))).join("") || `<p class="muted small">還沒有步驟。</p>`;
+    };
+    el.oninput = el.onchange = (e) => {
+      const t = e.target;
+      if (t.dataset.p) {
+        let v = t.value;
+        if (t.dataset.p === "priority") v = Number(v) || 0;
+        if (t.dataset.p === "channel_id") v = v === "" ? null : Number(v);
+        a[t.dataset.p] = v;
+        if (t.dataset.p === "trigger_type" && e.type === "change") renderTv();
+      }
+      if (t.dataset.s) {
+        const path = t.dataset.s.split(".");
+        let o = a.steps;
+        for (const k of path.slice(0, -1)) o = o[k];
+        let v = t.type === "checkbox" ? t.checked : t.value;
+        if (t.type === "number") v = Number(v) || 0;
+        o[path[path.length - 1]] = v;
+      }
+      if (t.dataset.btype && e.type === "change") {
+        const [i, j] = t.dataset.btype.split(".").map(Number);
+        const title = a.steps[i].buttons[j].title;
+        a.steps[i].buttons[j] = t.value === "postback" ? { type: "postback", title, payload: "" } : { type: "url", title, url: "", track: true };
+        renderSteps();
+      }
+      preview();
+    };
+    el.onclick = (e) => {
+      const b = e.target.closest("[data-act]");
+      if (!b) return;
+      const [i, j] = (b.dataset.idx || "").split(".").map(Number);
+      const s = a.steps[i];
+      switch (b.dataset.act) {
+        case "rm": a.steps.splice(i, 1); break;
+        case "up": if (i > 0) [a.steps[i - 1], a.steps[i]] = [a.steps[i], a.steps[i - 1]]; break;
+        case "down": if (i < a.steps.length - 1) [a.steps[i + 1], a.steps[i]] = [a.steps[i], a.steps[i + 1]]; break;
+        case "add-btn": if (s.buttons.length < 3) s.buttons.push({ type: "url", title: "", url: "", track: true }); break;
+        case "rm-btn": s.buttons.splice(j, 1); break;
+        case "add-qr": s.replies.push({ title: "", payload: "" }); break;
+        case "rm-qr": s.replies.splice(j, 1); break;
+        default: return;
+      }
+      renderSteps();
+      preview();
+    };
+    $("#add-step").onclick = () => {
+      const t = $("#add-type").value;
+      a.steps.push({
+        text: { type: "text", text: "" },
+        buttons: { type: "buttons", text: "", buttons: [{ type: "url", title: "", url: "", track: true }] },
+        quick_replies: { type: "quick_replies", text: "", replies: [{ title: "", payload: "" }] },
+        image: { type: "image", url: "" },
+        delay: { type: "delay", seconds: 2 },
+        tag: { type: "tag", tag: "" },
+        goto: { type: "goto", automation_id: all.find((x) => x.id !== a.id)?.id ?? 0 },
+      }[t]);
+      renderSteps();
+      preview();
+    };
+    $("#adv-save").onclick = (e) =>
+      busy(e.currentTarget, async () => {
+        try {
+          const body = { ...a, enabled: a.enabled !== 0 };
+          if (a.id) await api(`/automations/${a.id}`, { method: "PUT", body });
+          else await api("/automations", { method: "POST", body });
+          toast("已儲存");
+          location.hash = "#automations";
+        } catch (err) {
+          toast(err.message, true);
+        }
+      });
+    renderTv();
+    renderSteps();
+    preview();
+  }
+  function stepCard(s, i, others) {
+    const p = (k) => `${i}.${k}`;
+    let body = "";
+    switch (s.type) {
+      case "text":
+        body = `<textarea class="input" data-s="${p("text")}" placeholder="訊息內容">${esc(s.text)}</textarea>`;
+        break;
+      case "buttons":
+        body = `<textarea class="input" data-s="${p("text")}" placeholder="按鈕上方的文字">${esc(s.text)}</textarea>
+          ${s.buttons
             .map(
-              (u) => `<tr><td>${esc(u.email)}</td><td>${esc(u.name)}</td><td>${u.role === "owner" ? '<span class="badge">擁有者</span>' : "用戶"}</td>
-              <td>${subBadge(u.subscription)}</td><td>${u.channels} / ${u.automations}</td>
-              <td>${u.role === "owner" ? "" : `<span class="row"><input type="number" min="1" style="width:70px" value="1" data-grant-months="${u.id}"/> 個月 <button class="btn small" data-grant="${u.id}">延長</button></span>`}</td></tr>`,
+              (b, j) => `<div class="btn-line">
+                <input class="input" data-s="${p(`buttons.${j}.title`)}" maxlength="20" value="${esc(b.title)}" placeholder="按鈕文字"/>
+                ${b.type === "postback" ? `<input class="input" data-s="${p(`buttons.${j}.payload`)}" value="${esc(b.payload)}" placeholder="payload"/>` : `<input class="input" data-s="${p(`buttons.${j}.url`)}" value="${esc(b.url)}" placeholder="https://"/>`}
+                <select class="input" data-btype="${i}.${j}" style="width:auto"><option value="url" ${b.type === "url" ? "selected" : ""}>開網址</option><option value="postback" ${b.type === "postback" ? "selected" : ""}>回傳 payload</option></select>
+                <button class="btn btn-ghost icon-btn" data-act="rm-btn" data-idx="${i}.${j}" aria-label="移除">${icon("x")}</button>
+              </div>`,
             )
             .join("")}
-        </tbody></table>
-      </div>
+          ${s.buttons.length < 3 ? `<div><button class="btn btn-sm" data-act="add-btn" data-idx="${i}">${icon("plus")}按鈕</button></div>` : ""}`;
+        break;
+      case "quick_replies":
+        body = `<textarea class="input" data-s="${p("text")}" placeholder="問題">${esc(s.text)}</textarea>
+          ${s.replies.map((r, j) => `<div class="btn-line" style="grid-template-columns:1fr 1fr auto"><input class="input" data-s="${p(`replies.${j}.title`)}" maxlength="20" value="${esc(r.title)}" placeholder="選項文字"/><input class="input" data-s="${p(`replies.${j}.payload`)}" value="${esc(r.payload)}" placeholder="payload（可留空）"/><button class="btn btn-ghost icon-btn" data-act="rm-qr" data-idx="${i}.${j}" aria-label="移除">${icon("x")}</button></div>`).join("")}
+          <div><button class="btn btn-sm" data-act="add-qr" data-idx="${i}">${icon("plus")}選項</button></div>`;
+        break;
+      case "image":
+        body = `<input class="input" data-s="${p("url")}" value="${esc(s.url)}" placeholder="https://圖片網址.jpg"/>`;
+        break;
+      case "delay":
+        body = `<div class="row">等待 <input class="input" type="number" min="0" max="15" style="width:90px" data-s="${p("seconds")}" value="${s.seconds}"/> 秒（最多 15 秒）</div>`;
+        break;
+      case "tag":
+        body = `<input class="input" data-s="${p("tag")}" value="${esc(s.tag)}" placeholder="標籤名稱"/>`;
+        break;
+      case "goto":
+        body = `<select class="input" data-s="${p("automation_id")}">${others.map((x) => `<option value="${x.id}" ${x.id === Number(s.automation_id) ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>`;
+        break;
+    }
+    return `<div class="step-card"><div class="sh"><b>${i + 1}. ${STEP_LABEL[s.type]}</b><span class="row" style="gap:2px">
+      <button class="btn btn-ghost btn-sm icon-btn" data-act="up" data-idx="${i}" aria-label="上移" style="transform:rotate(90deg)">${icon("left")}</button>
+      <button class="btn btn-ghost btn-sm icon-btn" data-act="down" data-idx="${i}" aria-label="下移" style="transform:rotate(-90deg)">${icon("left")}</button>
+      <button class="btn btn-ghost btn-sm icon-btn btn-danger" data-act="rm" data-idx="${i}" aria-label="刪除">${icon("trash")}</button></span></div>
+      <div class="sb">${body}</div></div>`;
+  }
 
-      <div class="card">
-        <h2>6. 全部訂單</h2>
-        ${allOrders.length
-          ? `<table><thead><tr><th>時間</th><th>用戶</th><th>訂單編號</th><th>方案</th><th>金額</th><th>狀態</th><th>PayUni 序號</th></tr></thead><tbody>${allOrders
-              .map(
-                (o) => `<tr><td class="small">${fmtTime(o.created_at)}</td><td class="small">${esc(o.email ?? "")}</td><td class="mono small">${esc(o.order_no)}</td><td>${esc(o.plan_name)}</td><td>${money(o.amount)}</td>
-                <td>${o.status === "paid" ? '<span class="badge ok">已付款</span>' : o.status === "failed" ? '<span class="badge err">失敗</span>' : '<span class="badge warn">未完成</span>'}</td><td class="mono small">${esc(o.payuni_trade_no ?? "")}</td></tr>`,
-              )
-              .join("")}</tbody></table>`
-          : '<p class="muted">尚無訂單。</p>'}
-      </div>
-
-      <div class="card">
-        <h2>7. 更改我的密碼</h2>
-        <div class="three">
-          <label class="field"><span>目前密碼</span><input type="password" id="pw-current" autocomplete="current-password"/></label>
-          <label class="field"><span>新密碼（至少 8 字元）</span><input type="password" id="pw-new" autocomplete="new-password"/></label>
-          <label class="field"><span>&nbsp;</span><button class="btn" id="pw-save">更改密碼</button></label>
+  /* ---- test modal ---- */
+  function openTestModal(a) {
+    const scen = a && a.trigger_type === "keyword" ? "message" : a && a.trigger_type === "postback" ? "postback" : "ad";
+    const m = modal({
+      title: "測試自動回覆",
+      body: `<div class="grid-2" style="align-items:start">
+        <div class="stack">
+          <p class="muted small">模擬一位客人的行為，看看會收到什麼。不會真的傳送訊息。</p>
+          <div class="field"><span class="label">模擬情境</span>
+            <div class="stack-sm" id="t-scen">
+              ${[["ad", "從廣告點進來"], ["message", "傳了一則訊息"], ["postback", "按下某個按鈕"]].map(([k, l]) => `<label class="check"><input type="radio" name="scen" value="${k}" ${k === scen ? "checked" : ""}/>${l}</label>`).join("")}
+            </div></div>
+          <div id="t-fields" class="stack"></div>
+          <label class="field"><span class="label">平台</span><select class="input" id="t-platform"><option value="messenger">Messenger</option><option value="instagram">Instagram</option></select></label>
+          <button class="btn btn-primary" id="t-run">${icon("play")}執行測試</button>
         </div>
-      </div>`;
-
-    $("#s-save").onclick = async () => {
-      try {
-        await api("/settings", {
-          method: "POST",
-          body: {
-            app_name: $("#s-app-name").value,
-            trial_days: Number($("#s-trial").value),
-            allow_signup: $("#s-signup").value === "1",
-            public_url: $("#s-public-url").value,
-            meta_app_id: $("#s-app-id").value,
-            meta_app_secret: $("#s-app-secret").value,
-            graph_version: $("#s-graph").value,
-            verify_token: $("#s-verify").value,
-            payuni_mer_id: $("#s-pu-mer").value,
-            payuni_hash_key: $("#s-pu-key").value,
-            payuni_hash_iv: $("#s-pu-iv").value,
-            payuni_sandbox: $("#s-pu-sandbox").checked,
-          },
-        });
-        toast("已儲存設定");
-        state.me = await api("/auth/me");
-        showShell();
-        settings();
-      } catch (err) {
-        toast(err.message, true);
-      }
+        <div><div id="t-result">${phoneMock({ bubbles: [{ meta: "按「執行測試」看結果" }] })}</div><div id="t-matched" class="small" style="margin-top:10px"></div></div>
+      </div>`,
+    });
+    const fields = () => {
+      const s = $("input[name=scen]:checked", m.el).value;
+      $("#t-fields", m.el).innerHTML =
+        s === "ad"
+          ? `<label class="field"><span class="label">廣告 ID（選填）</span><input class="input" id="t-ad" value="${esc(a?.trigger_type === "ad" ? a.trigger_value.split(/[,，]/)[0].trim() : "")}" placeholder="不填代表任何廣告"/></label>
+             <label class="field"><span class="label">ref 參數（選填）</span><input class="input" id="t-ref" value="${esc(a?.trigger_type === "ref" ? a.trigger_value.split(/[,，]/)[0].trim() : "")}"/></label>`
+          : s === "message"
+            ? `<label class="field"><span class="label">客人傳的訊息</span><input class="input" id="t-text" value="${esc(a?.trigger_type === "keyword" ? a.trigger_value.split(/[,，]/)[0].trim() : "你好")}"/></label>`
+            : `<label class="field"><span class="label">按鈕 payload</span><input class="input" id="t-pb" value="${esc(a?.trigger_type === "postback" ? a.trigger_value : "")}"/></label>`;
     };
-    const showResult = (obj) => {
-      const pre = $("#s-register-result");
-      pre.textContent = JSON.stringify(obj, null, 2);
-      pre.classList.remove("hidden");
-    };
-    $("#s-register").onclick = async () => {
-      $("#s-register").disabled = true;
-      try {
-        const r = await api("/webhook/register", { method: "POST" });
-        showResult(r);
-        const ok = r.results.page.ok && r.results.instagram.ok;
-        toast(ok ? "Webhook 登記成功" : "部分登記失敗，請看下方結果", !ok);
-      } catch (err) {
-        toast(err.message, true);
-      }
-      $("#s-register").disabled = false;
-    };
-    $("#s-status").onclick = async () => {
-      try {
-        showResult(await api("/webhook/status"));
-      } catch (err) {
-        toast(err.message, true);
-      }
-    };
-    $("#pw-save").onclick = async () => {
-      try {
-        await api("/auth/password", { method: "POST", body: { current: $("#pw-current").value, password: $("#pw-new").value } });
-        toast("密碼已更改");
-        $("#pw-current").value = $("#pw-new").value = "";
-      } catch (err) {
-        toast(err.message, true);
-      }
-    };
-    view.querySelectorAll("[data-plan-save]").forEach((btn) => {
-      btn.onclick = async () => {
-        const tr = btn.closest("tr");
-        const g = (n) => tr.querySelector(`[data-f="${n}"]`);
+    $$("input[name=scen]", m.el).forEach((r) => (r.onchange = fields));
+    fields();
+    $("#t-run", m.el).onclick = (e) =>
+      busy(e.currentTarget, async () => {
+        const s = $("input[name=scen]:checked", m.el).value;
+        const body = { platform: $("#t-platform", m.el).value };
+        if (s === "ad") { body.ad_id = $("#t-ad", m.el).value.trim() || "TEST_AD"; body.ref = $("#t-ref", m.el).value.trim(); }
+        if (s === "message") body.text = $("#t-text", m.el).value.trim();
+        if (s === "postback") body.postback_payload = $("#t-pb", m.el).value.trim();
         try {
-          await api("/billing/plans", {
-            method: "POST",
-            body: { id: btn.dataset.planSave || undefined, code: g("code").value, name: g("name").value, price: Number(g("price").value), months: Number(g("months").value), sort: Number(g("sort").value), active: g("active").checked },
-          });
-          toast("方案已儲存");
-          settings();
+          const r = await api("/simulate", { method: "POST", body });
+          const sys = s === "ad" ? "透過廣告開啟對話" : null;
+          const userText = s === "message" ? body.text : s === "postback" ? `（按下 ${body.postback_payload}）` : null;
+          $("#t-result", m.el).innerHTML = phoneMock({ sys, userText, bubbles: r.matched ? graphMessagesToBubbles(r.messages) : [{ meta: "沒有任何自動回覆被觸發" }] });
+          $("#t-matched", m.el).innerHTML = r.matched
+            ? `<div class="result-ok">${icon("check")}觸發了「${esc(r.matched.name)}」</div>`
+            : `<div class="result-err">${icon("alert")}<span>沒有符合的規則。檢查觸發條件，或新增一個「其他所有訊息」的預設回覆。</span></div>`;
+          if (r.matched) store.set(ukey("tested"), true);
         } catch (err) {
           toast(err.message, true);
         }
-      };
-    });
-    view.querySelectorAll("[data-plan-del]").forEach((btn) => {
-      btn.onclick = async () => {
-        if (!confirm("刪除此方案？（不影響已購買的用戶）")) return;
-        await api(`/billing/plans/${btn.dataset.planDel}`, { method: "DELETE" });
-        settings();
-      };
-    });
-    view.querySelectorAll("[data-grant]").forEach((btn) => {
-      btn.onclick = async () => {
-        const months = Number(view.querySelector(`[data-grant-months="${btn.dataset.grant}"]`).value);
-        try {
-          const r = await api("/billing/grant", { method: "POST", body: { user_id: Number(btn.dataset.grant), months } });
-          toast(`已延長，到期日 ${fmtDate(r.paid_until)}`);
-          settings();
-        } catch (err) {
-          toast(err.message, true);
-        }
-      };
-    });
-  }
-  function planRow(p, isNew = false) {
-    return `<tr>
-      <td><input type="text" data-f="code" value="${esc(p.code)}" placeholder="monthly" style="width:110px"/></td>
-      <td><input type="text" data-f="name" value="${esc(p.name)}" placeholder="月繳方案"/></td>
-      <td><input type="number" data-f="price" value="${esc(p.price)}" style="width:100px"/></td>
-      <td><input type="number" data-f="months" value="${esc(p.months)}" style="width:70px"/></td>
-      <td><input type="number" data-f="sort" value="${esc(p.sort)}" style="width:60px"/></td>
-      <td><input type="checkbox" data-f="active" ${p.active ? "checked" : ""}/></td>
-      <td class="row"><button class="btn small" data-plan-save="${p.id}">${isNew ? "新增" : "儲存"}</button>${isNew ? "" : `<button class="btn small danger" data-plan-del="${p.id}">刪除</button>`}</td></tr>`;
-  }
-  function subBadge(sub) {
-    if (sub.source === "owner") return '<span class="badge">不限</span>';
-    if (sub.source === "paid") return `<span class="badge ok">付費至 ${fmtDate(sub.until)}</span>`;
-    if (sub.source === "trial") return `<span class="badge">試用至 ${fmtDate(sub.until)}</span>`;
-    return `<span class="badge err">已到期${sub.until ? " " + fmtDate(sub.until) : ""}</span>`;
+      });
   }
 
-  /* ---------- 頻道 ---------- */
-  async function channels(sub, pendingId) {
-    if (sub === "connect" && pendingId) return connectPages(pendingId);
+  /* =========================================================
+     Connections
+     ========================================================= */
+  PAGES.connections = async (el, args) => {
+    if (args[0] === "connect" && args[1]) return renderConnect(el, args[1]);
     const [list, o] = await Promise.all([api("/channels"), api("/overview")]);
-    view.innerHTML = `
-      <div class="row between" style="margin-bottom:12px">
-        <h2 style="margin:0">頻道</h2>
-        ${o.app_configured ? '<a class="btn fb" href="/auth/facebook">ƒ 用 Facebook 登入連接粉絲專頁</a>' : isOwner() ? '<a class="btn" href="#settings">請先到「平台設定」填入 Meta App →</a>' : '<span class="muted small">平台尚未設定 Meta App</span>'}
-      </div>
+    const connectBtn = o.app_configured ? `<a class="btn btn-fb" href="/auth/facebook">${icon("facebook")}連接 Facebook</a>` : "";
+    el.innerHTML = `<div class="page narrow">
+      ${pageHead("連接帳號", "連接粉絲專頁與 Instagram 後，自動回覆才會生效。", list.length ? connectBtn : "")}
+      ${!o.app_configured ? (isOwner() ? `<div class="banner brand">${icon("sliders")}<div class="grow">要先完成 Meta App 設定，才能連接粉絲專頁。</div><a class="btn btn-sm btn-primary" href="#setup/meta">前往設定</a></div>` : `<div class="banner warning">${icon("info")}<div class="grow">平台管理員還沒完成設定，暫時無法連接。</div></div>`) : ""}
       <div class="card">
         ${list.length
-          ? `<table><thead><tr><th>名稱</th><th>平台</th><th>ID</th><th>權杖</th><th></th></tr></thead><tbody>${list
+          ? list
               .map(
-                (c) => `<tr><td><b>${esc(c.name)}</b></td><td>${platformBadge(c.platform)}${c.instagram_login ? ' <span class="badge off">IG 登入</span>' : ""}</td>
-                <td class="mono">${esc(c.external_id)}</td><td class="mono small">${esc(c.access_token)}</td>
-                <td class="row"><button class="btn small" data-test="${c.id}">測試權杖</button>${c.platform === "messenger" ? `<button class="btn small" data-sub="${c.id}">重新訂閱</button>` : ""}<button class="btn small danger" data-del="${c.id}">移除</button></td></tr>`,
+                (c) => `<div class="conn">
+                  <div class="ci ${c.platform === "instagram" ? "ig" : "fb"}">${icon(c.platform === "instagram" ? "instagram" : "facebook")}</div>
+                  <div class="cm"><b>${esc(c.name)}</b><span>${c.platform === "instagram" ? "Instagram 專業帳號" : "Facebook 粉絲專頁"} · ID ${esc(c.external_id)}</span></div>
+                  <span class="badge success"><span class="bdot"></span>已連接</span>
+                  <div class="row" style="gap:2px">
+                    <button class="btn btn-ghost btn-sm" data-test="${c.id}" data-busy="檢查中">檢查</button>
+                    ${c.platform === "messenger" ? `<button class="btn btn-ghost btn-sm" data-sub="${c.id}" data-busy="處理中" title="重新訂閱 Webhook 並設定開始使用按鈕">修復</button>` : ""}
+                    <button class="btn btn-ghost btn-sm btn-danger icon-btn" data-del="${c.id}" aria-label="移除">${icon("trash")}</button>
+                  </div></div>`,
               )
-              .join("")}</tbody></table>`
-          : '<div class="empty">尚未連接任何粉絲專頁。按右上角「用 Facebook 登入連接」，授權後勾選要連的專頁即可。</div>'}
+              .join("")
+          : empty(
+              "plug",
+              "連接你的 Facebook 粉絲專頁",
+              "按下按鈕會開啟 Facebook，選擇要連接的粉絲專頁並允許權限即可。綁定在專頁上的 Instagram 專業帳號會一起連上。",
+              connectBtn || `<button class="btn" disabled>${icon("facebook")}連接 Facebook</button>`,
+            )}
       </div>
-      <details class="card">
-        <summary>進階：手動新增頻道（已有權杖時使用）</summary>
-        <div class="three" style="margin-top:12px">
-          <label class="field"><span>平台</span><select id="ch-platform"><option value="messenger">Messenger（粉絲專頁）</option><option value="instagram">Instagram</option></select></label>
-          <label class="field"><span>粉絲專頁 ID / IG 帳號 ID</span><input type="text" id="ch-id"/></label>
-          <label class="field"><span>顯示名稱</span><input type="text" id="ch-name"/></label>
-        </div>
-        <label class="field"><span>存取權杖</span><input type="password" id="ch-token"/></label>
-        <label class="switch"><input type="checkbox" id="ch-iglogin"/> 這是用「Instagram 登入」取得的權杖（走 graph.instagram.com）</label>
-        <div style="margin-top:12px"><button class="btn" id="ch-save">儲存頻道</button></div>
-      </details>`;
-    $("#ch-save").onclick = async () => {
-      try {
-        await api("/channels", {
-          method: "POST",
-          body: { platform: $("#ch-platform").value, external_id: $("#ch-id").value, name: $("#ch-name").value, access_token: $("#ch-token").value, instagram_login: $("#ch-iglogin").checked },
-        });
-        toast("已儲存頻道");
-        channels();
-      } catch (err) {
-        toast(err.message, true);
-      }
-    };
-    const bind = (attr, fn) =>
-      view.querySelectorAll(`[${attr}]`).forEach((el) => {
-        el.onclick = async () => {
-          el.disabled = true;
-          try {
-            await fn(el.getAttribute(attr));
-          } catch (err) {
-            toast(err.message, true);
-          }
-          el.disabled = false;
-        };
+      ${list.length ? "" : `<div class="grid-3" style="margin-top:16px">
+        ${miniInfo("shield", "安全", "我們只取得傳送訊息需要的權限，不會在你的專頁發文。")}
+        ${miniInfo("zap", "全自動", "連接後會自動完成 Webhook 訂閱與「開始使用」按鈕設定。")}
+        ${miniInfo("instagram", "Instagram", "IG 需先切換成專業帳號，並在 Meta 商業套件綁定到粉絲專頁。")}
+      </div>`}
+      <details class="adv" style="margin-top:24px"><summary>${icon("right")}進階：用存取權杖手動新增</summary>
+        <div class="card" style="margin-top:12px"><div class="card-body stack">
+          <div class="grid-2">
+            <label class="field"><span class="label">平台</span><select class="input" id="ch-platform"><option value="messenger">Facebook 粉絲專頁</option><option value="instagram">Instagram</option></select></label>
+            <label class="field"><span class="label">專頁或帳號 ID</span><input class="input" id="ch-id"/></label>
+          </div>
+          <label class="field"><span class="label">顯示名稱</span><input class="input" id="ch-name"/></label>
+          <label class="field"><span class="label">存取權杖</span><input class="input" type="password" id="ch-token"/></label>
+          <label class="check"><input type="checkbox" id="ch-iglogin"/>這是「Instagram 登入」取得的權杖</label>
+          <div><button class="btn" id="ch-save" data-busy="儲存中">儲存</button></div>
+        </div></div>
+      </details>
+    </div>`;
+    $("#ch-save").onclick = (e) =>
+      busy(e.currentTarget, async () => {
+        try {
+          await api("/channels", { method: "POST", body: { platform: $("#ch-platform").value, external_id: $("#ch-id").value, name: $("#ch-name").value, access_token: $("#ch-token").value, instagram_login: $("#ch-iglogin").checked } });
+          toast("已新增");
+          PAGES.connections(el, []);
+        } catch (err) {
+          toast(err.message, true);
+        }
       });
-    bind("data-test", async (id) => {
-      const r = await api(`/channels/${id}/test`, { method: "POST" });
-      toast(`權杖有效：${r.result.name || r.result.id}`);
-    });
-    bind("data-sub", async (id) => {
-      await api(`/channels/${id}/subscribe`, { method: "POST" });
-      toast("已重新訂閱 Webhook 並設定開始使用按鈕");
-    });
-    bind("data-del", async (id) => {
-      if (!confirm("移除此頻道？（不會取消 Meta 端的訂閱）")) return;
-      await api(`/channels/${id}`, { method: "DELETE" });
-      channels();
-    });
-  }
+    $$("[data-test]", el).forEach((b) => (b.onclick = () => busy(b, async () => {
+      try { const r = await api(`/channels/${b.dataset.test}/test`, { method: "POST" }); toast(`連線正常：${r.result.name || r.result.id}`); }
+      catch (err) { toast(`連線有問題：${err.message}。請重新連接 Facebook。`, true); }
+    })));
+    $$("[data-sub]", el).forEach((b) => (b.onclick = () => busy(b, async () => {
+      try { await api(`/channels/${b.dataset.sub}/subscribe`, { method: "POST" }); toast("已重新設定完成"); } catch (err) { toast(err.message, true); }
+    })));
+    $$("[data-del]", el).forEach((b) => (b.onclick = async () => {
+      const c = list.find((x) => x.id === Number(b.dataset.del));
+      if (!(await confirmDialog("移除連接", `移除「${c.name}」後，這個帳號的訊息就不會再自動回覆。`, "移除", true))) return;
+      await api(`/channels/${c.id}`, { method: "DELETE" });
+      toast("已移除");
+      PAGES.connections(el, []);
+    }));
+  };
+  const miniInfo = (ic, t, d) => `<div class="card card-body" style="padding:16px 18px"><div class="row" style="gap:8px;margin-bottom:4px;color:var(--text)">${icon(ic).replace("<svg", '<svg style="width:16px;height:16px;color:var(--brand)"')}<b>${t}</b></div><p class="small muted">${d}</p></div>`;
 
-  async function connectPages(pendingId) {
+  async function renderConnect(el, pendingId) {
     let pages;
     try {
       pages = await api(`/facebook/pending/${pendingId}`);
     } catch (err) {
       toast(err.message, true);
-      location.hash = "#channels";
+      location.hash = "#connections";
       return;
     }
-    view.innerHTML = `
-      <h2>選擇要連接的粉絲專頁</h2>
-      <div class="card">
-        <p class="muted">勾選後會自動：儲存專頁權杖、訂閱 Webhook、設定「開始使用」按鈕；有綁定 Instagram 專業帳號的也會一併連接。</p>
+    el.innerHTML = `<div class="page narrow">
+      ${backLink("#connections", "連接帳號")}
+      ${pageHead("選擇要連接的粉絲專頁", "勾選後按「連接」，其餘設定會自動完成。")}
+      <div class="card"><div class="card-body stack-sm" id="pick">
         ${pages
           .map(
-            (p) => `<label class="page-pick">
-              <input type="checkbox" value="${esc(p.id)}" ${p.already_connected || p.connected_by_other ? "" : "checked"} ${p.connected_by_other ? "disabled" : ""}/>
-              <div><b>${esc(p.name)}</b> <span class="mono small muted">${esc(p.id)}</span>
-                ${p.instagram ? `<div class="small"><span class="badge ig">Instagram</span> ${esc(p.instagram.username ? "@" + p.instagram.username : p.instagram.id)}</div>` : ""}
-                ${p.already_connected ? '<div class="small ok-text">已連接過，勾選會更新權杖</div>' : ""}
-                ${p.connected_by_other ? '<div class="small warn-text">已被其他帳號連接</div>' : ""}
-              </div></label>`,
+            (p) => `<label class="page-pick" ${p.connected_by_other ? 'style="opacity:.55;cursor:not-allowed"' : ""}>
+              <input type="checkbox" value="${esc(p.id)}" ${p.connected_by_other ? "disabled" : p.already_connected ? "" : "checked"}/>
+              <div class="pi">${esc((p.name || "?").slice(0, 1))}</div>
+              <div style="flex:1;min-width:0"><b>${esc(p.name)}</b>
+                <div class="small muted">${p.instagram ? `+ Instagram ${esc(p.instagram.username ? "@" + p.instagram.username : p.instagram.id)}` : "沒有綁定 Instagram"}</div></div>
+              ${p.connected_by_other ? '<span class="badge warning">已被其他帳號使用</span>' : p.already_connected ? '<span class="badge success">已連接</span>' : ""}
+            </label>`,
           )
           .join("")}
-        <div class="row" style="margin-top:12px">
-          <button class="btn primary" id="connect-go">連接選取的專頁</button>
-          <a class="btn" href="#channels">取消</a>
-        </div>
-        <div id="connect-result"></div>
-      </div>`;
-    $("#connect-go").onclick = async () => {
-      const ids = [...view.querySelectorAll("input[type=checkbox]:checked")].map((i) => i.value);
-      if (!ids.length) return toast("請至少選一個專頁", true);
-      $("#connect-go").disabled = true;
-      try {
-        const r = await api("/facebook/connect", { method: "POST", body: { pending_id: pendingId, page_ids: ids } });
-        $("#connect-result").innerHTML = `<h3>結果</h3><ul class="check-list">${r.results
-          .map(
-            (x) => `<li><b>${esc(x.name)}</b>：
-              ${x.subscribed ? '<span class="ok-text">Webhook 已訂閱</span>' : '<span class="warn-text">Webhook 訂閱失敗</span>'} ·
-              ${x.get_started ? '<span class="ok-text">開始使用按鈕已設定</span>' : '<span class="warn-text">開始使用按鈕未設定</span>'}
-              ${x.instagram ? ` · <span class="ok-text">Instagram ${esc(x.instagram)} 已連接</span>` : ""}
-              ${x.errors.length ? `<div class="small warn-text">${x.errors.map(esc).join("<br/>")}</div>` : ""}</li>`,
-          )
-          .join("")}</ul><p><a class="btn primary" href="#automations">下一步：建立自動化 →</a></p>`;
-        toast("連接完成");
-      } catch (err) {
-        toast(err.message, true);
-        $("#connect-go").disabled = false;
-      }
-    };
-  }
-
-  /* ---------- 自動化列表 / 編輯 ---------- */
-  async function automations(arg) {
-    [state.automations, state.channels] = await Promise.all([api("/automations"), api("/channels")]);
-    if (arg === "new") {
-      state.editing = blankAutomation();
-      return renderEditor();
-    }
-    if (arg && arg.startsWith("edit-")) {
-      const a = state.automations.find((x) => x.id === Number(arg.slice(5)));
-      if (!a) return (location.hash = "#automations");
-      state.editing = JSON.parse(JSON.stringify(a));
-      return renderEditor();
-    }
-    state.editing = null;
-    const rows = state.automations
-      .map(
-        (a) => `<tr>
-          <td><b>${esc(a.name)}</b><div class="muted small">${a.steps.length} 個步驟 · 優先度 ${a.priority}</div></td>
-          <td><span class="badge">${TRIGGER_LABEL[a.trigger_type]}</span>${a.trigger_value ? `<div class="mono small">${esc(a.trigger_value)}</div>` : ""}</td>
-          <td>${platformBadge(a.platform)}</td>
-          <td>${a.triggered_count}</td>
-          <td><label class="switch"><input type="checkbox" data-toggle="${a.id}" ${a.enabled ? "checked" : ""}/> ${a.enabled ? "啟用" : "停用"}</label></td>
-          <td class="row"><a class="btn small" href="#automations/edit-${a.id}">編輯</a><button class="btn small danger" data-del="${a.id}">刪除</button></td></tr>`,
-      )
-      .join("");
-    view.innerHTML = `
-      <div class="row between" style="margin-bottom:12px">
-        <h2 style="margin:0">自動化</h2>
-        <div class="row">
-          <button class="btn" id="quick-ad">⚡ 快速建立：廣告點擊 → 導購</button>
-          <a class="btn primary" href="#automations/new">＋ 新增自動化</a>
-        </div>
-      </div>
-      <div class="card">
-        ${rows ? `<table><thead><tr><th>名稱</th><th>觸發條件</th><th>平台</th><th>觸發次數</th><th>狀態</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="empty">還沒有自動化，點右上角新增，或用「快速建立」。</div>'}
-      </div>`;
-    $("#quick-ad").onclick = () => {
-      state.editing = quickAdTemplate();
-      renderEditor();
-    };
-    view.querySelectorAll("[data-toggle]").forEach((el) => {
-      el.onchange = async () => {
-        await api(`/automations/${el.dataset.toggle}/enabled`, { method: "PATCH", body: { enabled: el.checked } });
-        toast(el.checked ? "已啟用" : "已停用");
-        automations();
-      };
-    });
-    view.querySelectorAll("[data-del]").forEach((el) => {
-      el.onclick = async () => {
-        if (!confirm("確定刪除這條自動化？")) return;
-        await api(`/automations/${el.dataset.del}`, { method: "DELETE" });
-        toast("已刪除");
-        automations();
-      };
-    });
-  }
-
-  function blankAutomation() {
-    return { name: "", enabled: 1, priority: 0, platform: "any", channel_id: null, trigger_type: "any_ad", trigger_value: "", steps: [{ type: "text", text: "" }] };
-  }
-  function quickAdTemplate() {
-    return {
-      name: "廣告點擊 → 導購",
-      enabled: 1,
-      priority: 10,
-      platform: "any",
-      channel_id: null,
-      trigger_type: "any_ad",
-      trigger_value: "",
-      steps: [
-        { type: "text", text: "{{first_name}} 你好 👋 感謝你對我們的廣告有興趣！" },
-        { type: "buttons", text: "點下方按鈕，直接前往了解更多 👇", buttons: [{ type: "url", title: "立即前往", url: "https://", track: true }] },
-        { type: "tag", tag: "ad-lead" },
-      ],
-    };
-  }
-
-  function renderEditor() {
-    const a = state.editing;
-    const isNew = !a.id;
-    view.innerHTML = `
-      <div class="row between" style="margin-bottom:12px">
-        <h2 style="margin:0">${isNew ? "新增自動化" : "編輯自動化"}</h2>
-        <a class="btn ghost" href="#automations">← 回列表</a>
-      </div>
-      <div class="card">
-        <div class="two">
-          <label class="field"><span>名稱</span><input type="text" data-path="name" value="${esc(a.name)}" placeholder="例：春季活動廣告接待"/></label>
-          <div class="two">
-            <label class="field"><span>優先度（大者優先）</span><input type="number" data-path="priority" value="${a.priority}"/></label>
-            <label class="field"><span>狀態</span><select data-path="enabled"><option value="1" ${a.enabled ? "selected" : ""}>啟用</option><option value="0" ${!a.enabled ? "selected" : ""}>停用</option></select></label>
-          </div>
-        </div>
-        <div class="two">
-          <label class="field"><span>平台</span>
-            <select data-path="platform">
-              <option value="any" ${a.platform === "any" ? "selected" : ""}>全部</option>
-              <option value="messenger" ${a.platform === "messenger" ? "selected" : ""}>Messenger</option>
-              <option value="instagram" ${a.platform === "instagram" ? "selected" : ""}>Instagram</option>
-            </select></label>
-          <label class="field"><span>限定頻道（可不選）</span>
-            <select data-path="channel_id">
-              <option value="">不限</option>
-              ${state.channels.map((c) => `<option value="${c.id}" ${a.channel_id === c.id ? "selected" : ""}>${esc(c.name)}（${c.platform}）</option>`).join("")}
-            </select></label>
-        </div>
-        <h3>觸發條件</h3>
-        <div class="two">
-          <label class="field"><span>類型</span>
-            <select data-path="trigger_type" id="trigger-type">
-              ${Object.entries(TRIGGER_LABEL).map(([k, v]) => `<option value="${k}" ${a.trigger_type === k ? "selected" : ""}>${v}</option>`).join("")}
-            </select></label>
-          <label class="field" id="trigger-value-field"><span>條件值</span><input type="text" data-path="trigger_value" value="${esc(a.trigger_value)}"/></label>
-        </div>
-        <div class="hint" id="trigger-help"></div>
-      </div>
-
-      <div class="card">
-        <div class="row between">
-          <h2 style="margin:0">回覆步驟</h2>
-          <div class="row">
-            <select id="add-step-type">
-              <option value="text">文字訊息</option>
-              <option value="buttons">文字 + 按鈕（導購連結）</option>
-              <option value="quick_replies">快速回覆選項</option>
-              <option value="image">圖片</option>
-              <option value="delay">等待幾秒</option>
-              <option value="tag">加上標籤</option>
-              <option value="goto">跳到另一條自動化</option>
-            </select>
-            <button class="btn" id="add-step">＋ 加入步驟</button>
-          </div>
-        </div>
-        <p class="muted small">可用變數：<code>{{first_name}}</code> <code>{{full_name}}</code> <code>{{ad_id}}</code> <code>{{ref}}</code> <code>{{message}}</code></p>
-        <div id="steps">${a.steps.map((s, i) => stepHtml(s, i)).join("")}</div>
-      </div>
-
-      <div class="two">
-        <div class="card"><h2>預覽</h2><div class="preview" id="preview">${previewHtml(a.steps)}</div></div>
-        <div class="card">
-          <h2>儲存</h2>
-          <p class="muted small">儲存後立即生效。建議先到「模擬測試」確認會命中這條規則。</p>
-          <div class="row"><button class="btn primary" id="save">${isNew ? "建立自動化" : "儲存變更"}</button><a class="btn" href="#automations">取消</a></div>
-          <p class="error" id="save-error"></p>
-        </div>
-      </div>`;
-
-    updateTriggerUi();
-    $("#add-step").onclick = () => {
-      a.steps.push(newStep($("#add-step-type").value));
-      renderEditor();
-    };
-    $("#save").onclick = async () => {
-      $("#save-error").textContent = "";
-      try {
-        const payload = { ...a, enabled: !!a.enabled };
-        if (isNew) await api("/automations", { method: "POST", body: payload });
-        else await api(`/automations/${a.id}`, { method: "PUT", body: payload });
-        toast("已儲存");
-        state.editing = null;
-        if (location.hash === "#automations" || location.hash === "") automations();
-        else location.hash = "#automations";
-      } catch (err) {
-        $("#save-error").textContent = err.message;
-      }
-    };
-  }
-
-  function updateTriggerUi() {
-    const a = state.editing;
-    if (!a || !$("#trigger-help")) return;
-    $("#trigger-help").textContent = TRIGGER_HELP[a.trigger_type];
-    $("#trigger-value-field").style.visibility = ["ad", "ref", "keyword", "postback"].includes(a.trigger_type) ? "visible" : "hidden";
-  }
-
-  const editorOpen = () => state.editing && $("#steps");
-  function onEditorField(e) {
-    if (!editorOpen()) return;
-    const a = state.editing;
-    const el = e.target;
-    if (!el.dataset.path) return;
-    let val = el.type === "checkbox" ? el.checked : el.value;
-    if (el.type === "number") val = Number(val);
-    if (el.dataset.path === "enabled") val = Number(val);
-    if (el.dataset.path === "channel_id") val = val === "" ? null : Number(val);
-    if (el.dataset.path.endsWith(".automation_id")) val = Number(val);
-    setPath(a, el.dataset.path, val);
-    if (el.dataset.path === "trigger_type") updateTriggerUi();
-    $("#preview").innerHTML = previewHtml(a.steps);
-  }
-  view.addEventListener("input", onEditorField);
-  view.addEventListener("change", onEditorField);
-  view.addEventListener("change", (e) => {
-    if (!editorOpen()) return;
-    const sel = e.target.closest("select[data-btn-type]");
-    if (!sel) return;
-    const a = state.editing;
-    const i = Number(sel.dataset.i);
-    const j = Number(sel.dataset.j);
-    const title = a.steps[i].buttons[j].title;
-    a.steps[i].buttons[j] = sel.value === "postback" ? { type: "postback", title, payload: "" } : { type: "url", title, url: "https://", track: true };
-    renderEditor();
-  });
-  view.addEventListener("click", (e) => {
-    if (!editorOpen()) return;
-    const a = state.editing;
-    const b = e.target.closest("[data-act]");
-    if (!b) return;
-    const i = Number(b.dataset.i);
-    const j = Number(b.dataset.j);
-    switch (b.dataset.act) {
-      case "rm-step": a.steps.splice(i, 1); break;
-      case "up": if (i > 0) [a.steps[i - 1], a.steps[i]] = [a.steps[i], a.steps[i - 1]]; break;
-      case "down": if (i < a.steps.length - 1) [a.steps[i + 1], a.steps[i]] = [a.steps[i], a.steps[i + 1]]; break;
-      case "add-btn": if (a.steps[i].buttons.length < 3) a.steps[i].buttons.push({ type: "url", title: "", url: "https://", track: true }); break;
-      case "rm-btn": a.steps[i].buttons.splice(j, 1); break;
-      case "add-qr": a.steps[i].replies.push({ title: "", payload: "" }); break;
-      case "rm-qr": a.steps[i].replies.splice(j, 1); break;
-      default: return;
-    }
-    renderEditor();
-  });
-
-  function setPath(obj, path, val) {
-    const keys = path.split(".");
-    let o = obj;
-    for (const k of keys.slice(0, -1)) o = o[k];
-    o[keys[keys.length - 1]] = val;
-  }
-  function newStep(type) {
-    return {
-      text: { type: "text", text: "" },
-      buttons: { type: "buttons", text: "", buttons: [{ type: "url", title: "立即前往", url: "https://", track: true }] },
-      quick_replies: { type: "quick_replies", text: "", replies: [{ title: "", payload: "" }] },
-      image: { type: "image", url: "https://" },
-      delay: { type: "delay", seconds: 2 },
-      tag: { type: "tag", tag: "" },
-      goto: { type: "goto", automation_id: state.automations[0]?.id ?? 0 },
-    }[type];
-  }
-  const STEP_LABEL = { text: "文字訊息", buttons: "文字 + 按鈕", quick_replies: "快速回覆", image: "圖片", delay: "等待", tag: "加標籤", goto: "跳轉自動化" };
-
-  function stepHtml(s, i) {
-    const p = (k) => `steps.${i}.${k}`;
-    let body = "";
-    switch (s.type) {
-      case "text":
-        body = `<textarea data-path="${p("text")}" placeholder="要回覆的文字">${esc(s.text)}</textarea>`;
-        break;
-      case "buttons":
-        body = `<textarea data-path="${p("text")}" placeholder="按鈕上方的文字">${esc(s.text)}</textarea>
-          <div style="margin-top:8px">${s.buttons
-            .map(
-              (b, j) => `<div class="btn-row">
-                <input type="text" data-path="${p(`buttons.${j}.title`)}" value="${esc(b.title)}" placeholder="按鈕文字（最多 20 字）" maxlength="20"/>
-                ${b.type === "postback"
-                  ? `<input type="text" data-path="${p(`buttons.${j}.payload`)}" value="${esc(b.payload)}" placeholder="payload（給「按鈕 payload」觸發用）"/>`
-                  : `<input type="url" data-path="${p(`buttons.${j}.url`)}" value="${esc(b.url)}" placeholder="https://你要導去的網址"/>`}
-                <select data-btn-type data-i="${i}" data-j="${j}">
-                  <option value="url" ${b.type === "url" ? "selected" : ""}>開網址</option>
-                  <option value="postback" ${b.type === "postback" ? "selected" : ""}>回傳 payload</option>
-                </select>
-                <button class="btn small danger" data-act="rm-btn" data-i="${i}" data-j="${j}">✕</button>
-                ${b.type === "url" ? `<label class="switch small" style="grid-column:1/-1"><input type="checkbox" data-path="${p(`buttons.${j}.track`)}" ${b.track !== false ? "checked" : ""}/> 使用追蹤連結（可統計點擊，使用者會先經過本系統再轉址）</label>` : ""}
-              </div>`,
-            )
-            .join("")}
-            ${s.buttons.length < 3 ? `<button class="btn small" data-act="add-btn" data-i="${i}">＋ 按鈕（最多 3 個）</button>` : ""}
-          </div>`;
-        break;
-      case "quick_replies":
-        body = `<textarea data-path="${p("text")}" placeholder="問題文字">${esc(s.text)}</textarea>
-          <div style="margin-top:8px">${s.replies
-            .map(
-              (r, j) => `<div class="btn-row" style="grid-template-columns:1fr 1fr auto">
-                <input type="text" data-path="${p(`replies.${j}.title`)}" value="${esc(r.title)}" placeholder="選項文字" maxlength="20"/>
-                <input type="text" data-path="${p(`replies.${j}.payload`)}" value="${esc(r.payload)}" placeholder="payload（留空＝同選項文字）"/>
-                <button class="btn small danger" data-act="rm-qr" data-i="${i}" data-j="${j}">✕</button>
-              </div>`,
-            )
-            .join("")}
-            <button class="btn small" data-act="add-qr" data-i="${i}">＋ 選項</button>
-          </div>`;
-        break;
-      case "image":
-        body = `<input type="url" data-path="${p("url")}" value="${esc(s.url)}" placeholder="https://圖片網址.jpg"/>`;
-        break;
-      case "delay":
-        body = `<div class="row">等待 <input type="number" min="0" max="15" style="width:90px" data-path="${p("seconds")}" value="${s.seconds}"/> 秒再送下一步（最多 15 秒）</div>`;
-        break;
-      case "tag":
-        body = `<input type="text" data-path="${p("tag")}" value="${esc(s.tag)}" placeholder="例：ad-lead"/>`;
-        break;
-      case "goto":
-        body = `<select data-path="${p("automation_id")}">${state.automations
-          .filter((x) => x.id !== state.editing.id)
-          .map((x) => `<option value="${x.id}" ${x.id === s.automation_id ? "selected" : ""}>${esc(x.name)}</option>`)
-          .join("")}</select>`;
-        break;
-    }
-    return `<div class="step">
-      <div class="step-head"><b>${i + 1}. ${STEP_LABEL[s.type]}</b>
-        <span class="row">
-          <button class="btn small ghost" data-act="up" data-i="${i}" title="上移">↑</button>
-          <button class="btn small ghost" data-act="down" data-i="${i}" title="下移">↓</button>
-          <button class="btn small danger" data-act="rm-step" data-i="${i}">刪除</button>
-        </span></div>
-      ${body}</div>`;
-  }
-
-  function previewHtml(steps) {
-    const demo = (t) => esc(String(t).replace(/\{\{\s*(first_name|full_name)\s*\}\}/g, "小明").replace(/\{\{[^}]*\}\}/g, ""));
-    const out = steps
-      .map((s) => {
-        switch (s.type) {
-          case "text": return `<div class="bubble">${demo(s.text) || "<span class='muted'>（空白）</span>"}</div>`;
-          case "buttons": return `<div class="bubble">${demo(s.text)}${s.buttons.map((b) => `<span class="pbtn">${demo(b.title) || "按鈕"}</span>`).join("")}</div>`;
-          case "quick_replies": return `<div class="bubble">${demo(s.text)}</div><div class="chips">${s.replies.map((r) => `<span class="chip">${demo(r.title) || "選項"}</span>`).join("")}</div>`;
-          case "image": return `<div class="bubble">🖼 ${esc(s.url)}</div>`;
-          case "delay": return `<div class="muted small" style="margin:4px 0">⏱ 等待 ${s.seconds} 秒</div>`;
-          case "tag": return `<div class="muted small" style="margin:4px 0">🏷 加標籤「${esc(s.tag)}」</div>`;
-          case "goto": return `<div class="muted small" style="margin:4px 0">↪ 跳到自動化 #${s.automation_id}</div>`;
-        }
-      })
-      .join("");
-    return out || '<div class="muted">尚無步驟</div>';
-  }
-
-  /* ---------- 聯絡人 ---------- */
-  async function contacts(arg) {
-    if (arg) {
-      const { contact: c, events: evs } = await api(`/contacts/${arg}`);
-      view.innerHTML = `
-        <div class="row between" style="margin-bottom:12px"><h2 style="margin:0">${esc([c.first_name, c.last_name].filter(Boolean).join(" ") || c.psid)}</h2><a class="btn ghost" href="#contacts">← 回列表</a></div>
-        <div class="two">
-          <div class="card">
-            <table>
-              <tr><th>平台</th><td>${platformBadge(c.platform)}</td></tr>
-              <tr><th>PSID</th><td class="mono">${esc(c.psid)}</td></tr>
-              <tr><th>來源廣告 ID</th><td>${esc(c.source_ad_id) || "—"}</td></tr>
-              <tr><th>來源 ref</th><td>${esc(c.source_ref) || "—"}</td></tr>
-              <tr><th>標籤</th><td>${c.tags.map((t) => `<span class="badge">${esc(t)}</span> `).join("") || "—"}</td></tr>
-              <tr><th>首次互動</th><td>${fmtTime(c.first_seen)}</td></tr>
-              <tr><th>最近互動</th><td>${fmtTime(c.last_seen)}</td></tr>
-            </table>
-            <h3>手動發送訊息</h3>
-            <p class="muted small">僅限對方最後一次互動 24 小時內。</p>
-            <div class="row"><input type="text" id="manual-text" placeholder="訊息內容" style="flex:1"/><button class="btn primary" id="manual-send">送出</button></div>
-          </div>
-          <div class="card"><h2>互動記錄</h2>${eventTable(evs)}</div>
-        </div>`;
-      $("#manual-send").onclick = async () => {
+      </div><div class="card-foot"><a class="btn" href="#connections">取消</a><button class="btn btn-primary" id="go" data-busy="連接中">連接</button></div></div>
+      <div id="connect-result" style="margin-top:16px"></div>
+    </div>`;
+    $("#go").onclick = (e) =>
+      busy(e.currentTarget, async () => {
+        const ids = $$("#pick input:checked").map((i) => i.value);
+        if (!ids.length) return toast("請至少選一個專頁", true);
         try {
-          await api(`/contacts/${c.id}/send`, { method: "POST", body: { text: $("#manual-text").value } });
-          toast("已送出");
-          contacts(arg);
+          const r = await api("/facebook/connect", { method: "POST", body: { pending_id: pendingId, page_ids: ids } });
+          const ok = r.results.every((x) => x.subscribed && !x.errors.length);
+          el.innerHTML = `<div class="page narrow"><div class="card">${empty(
+            ok ? "check" : "alert",
+            ok ? "連接完成" : "已連接，但有部分設定沒完成",
+            r.results.map((x) => `<b>${esc(x.name)}</b>${x.instagram ? ` 與 Instagram @${esc(x.instagram)}` : ""}${x.errors.length ? `<br/><span style="color:var(--danger)">${x.errors.map(esc).join("<br/>")}</span>` : ""}`).join("<br/>"),
+            `<a class="btn btn-primary" href="#automations/new/ad">${icon("plus")}建立自動回覆</a><a class="btn" href="#connections">查看連接</a>`,
+          )}</div></div>`;
         } catch (err) {
           toast(err.message, true);
         }
-      };
-      return;
-    }
-    const list = await api("/contacts");
-    view.innerHTML = `<h2>聯絡人</h2><div class="card">${
-      list.length
-        ? `<table><thead><tr><th>名稱</th><th>平台</th><th>來源</th><th>標籤</th><th>最近互動</th><th></th></tr></thead><tbody>${list
-            .map(
-              (c) => `<tr>
-              <td><a href="#contacts/${c.id}"><b>${esc([c.first_name, c.last_name].filter(Boolean).join(" ") || c.psid)}</b></a></td>
-              <td>${platformBadge(c.platform)}</td>
-              <td>${c.source_ad_id ? `<span class="badge ok">廣告 ${esc(c.source_ad_id)}</span>` : c.source_ref ? `<span class="badge">ref ${esc(c.source_ref)}</span>` : '<span class="muted">自然流量</span>'}</td>
-              <td>${c.tags.map((t) => `<span class="badge off">${esc(t)}</span>`).join(" ")}</td>
-              <td class="small">${fmtTime(c.last_seen)}</td>
-              <td><button class="btn small danger" data-del="${c.id}">刪除</button></td></tr>`,
-            )
-            .join("")}</tbody></table>`
-        : '<div class="empty">還沒有聯絡人。連接頻道後，有人從廣告點進來或傳訊息就會出現在這裡。</div>'
-    }</div>`;
-    view.querySelectorAll("[data-del]").forEach((el) => {
-      el.onclick = async () => {
-        if (!confirm("刪除此聯絡人？")) return;
-        await api(`/contacts/${el.dataset.del}`, { method: "DELETE" });
-        contacts();
-      };
-    });
-  }
-
-  /* ---------- 記錄 ---------- */
-  const TYPE_BADGE = { error: "err", warning: "warn", sent: "ok", click: "ok", info: "ok", automation: "", message: "off", postback: "off", referral: "" };
-  function eventTable(evs) {
-    if (!evs.length) return '<div class="empty">目前沒有記錄</div>';
-    return `<table><thead><tr><th style="width:150px">時間</th><th style="width:90px">類型</th><th>內容</th></tr></thead><tbody>${evs
-      .map(
-        (e) => `<tr><td class="small">${fmtTime(e.created_at)}</td><td><span class="badge ${TYPE_BADGE[e.type] ?? ""}">${esc(e.type)}</span></td>
-        <td>${esc(e.summary)}${e.contact_id ? ` <a class="small" href="#contacts/${e.contact_id}">聯絡人 #${e.contact_id}</a>` : ""}
-        ${e.payload ? `<details><summary>原始資料</summary><pre class="json">${esc(JSON.stringify(JSON.parse(e.payload), null, 2))}</pre></details>` : ""}</td></tr>`,
-      )
-      .join("")}</tbody></table>`;
-  }
-  async function events(_arg, query) {
-    const all = isOwner() && query?.get("scope") === "all";
-    const [evs, lk] = await Promise.all([api(`/events${all ? "?scope=all" : ""}`), api("/links")]);
-    view.innerHTML = `
-      <div class="row between" style="margin-bottom:12px"><h2 style="margin:0">記錄</h2>
-        <span class="row">${isOwner() ? (all ? '<a class="btn small" href="#events">只看我的</a>' : '<a class="btn small" href="#events?scope=all">看全平台（含系統事件）</a>') : ""}<button class="btn" id="refresh">重新整理</button></span></div>
-      <div class="card">${eventTable(evs)}</div>
-      <div class="card"><h2>追蹤連結</h2>${
-        lk.length
-          ? `<table><thead><tr><th>追蹤網址</th><th>目的地</th><th>點擊</th></tr></thead><tbody>${lk.map((l) => `<tr><td class="mono small">/r/${esc(l.slug)}</td><td class="small">${esc(l.url)}</td><td>${l.clicks}</td></tr>`).join("")}</tbody></table>`
-          : '<p class="muted">尚無追蹤連結（使用「文字 + 按鈕」步驟並勾選追蹤後會自動產生）。</p>'
-      }</div>`;
-    $("#refresh").onclick = () => events(_arg, query);
-  }
-
-  /* ---------- 模擬測試 ---------- */
-  async function simulate() {
-    view.innerHTML = `
-      <h2>模擬測試</h2>
-      <div class="two">
-        <div class="card">
-          <p class="muted small">模擬一個使用者「從廣告點進來」或「傳訊息」，看看會命中哪條自動化、送出什麼內容。不會真的發訊息。</p>
-          <label class="field"><span>平台</span><select id="sim-platform"><option value="messenger">Messenger</option><option value="instagram">Instagram</option></select></label>
-          <label class="field"><span>廣告 ID（模擬從廣告點進來）</span><input type="text" id="sim-ad" placeholder="例：120211234567890"/></label>
-          <label class="field"><span>ref 參數</span><input type="text" id="sim-ref" placeholder="例：spring_sale"/></label>
-          <label class="field"><span>使用者傳的訊息</span><input type="text" id="sim-text" placeholder="例：我想了解價格"/></label>
-          <label class="field"><span>按鈕 payload</span><input type="text" id="sim-payload" placeholder="例：WANT_PRICE"/></label>
-          <button class="btn primary" id="sim-run">▶ 執行模擬</button>
-        </div>
-        <div class="card"><h2>結果</h2><div id="sim-result" class="muted">尚未執行</div></div>
-      </div>`;
-    $("#sim-run").onclick = async () => {
-      const r = await api("/simulate", {
-        method: "POST",
-        body: { platform: $("#sim-platform").value, ad_id: $("#sim-ad").value.trim(), ref: $("#sim-ref").value.trim(), text: $("#sim-text").value.trim(), postback_payload: $("#sim-payload").value.trim() },
       });
-      const box = $("#sim-result");
-      if (!r.matched) {
-        box.innerHTML = '<span class="badge warn">沒有命中任何自動化</span><p class="muted small">檢查觸發條件、平台限制，或新增一條「預設回覆」。</p>';
-        return;
-      }
-      box.innerHTML = `<p>命中：<span class="badge ok">${esc(r.matched.name)}</span></p>
-        <div class="preview">${r.messages.map(renderOutgoing).join("")}</div>
-        <details><summary>送給 Graph API 的原始 JSON</summary><pre class="json">${esc(JSON.stringify(r.messages, null, 2))}</pre></details>`;
+  }
+
+  /* =========================================================
+     Contacts
+     ========================================================= */
+  PAGES.contacts = async (el, args) => {
+    if (args[0]) return renderContact(el, Number(args[0]));
+    const list = await api("/contacts");
+    el.innerHTML = `<div class="page">
+      ${pageHead("聯絡人", "所有傳過訊息或從廣告點進來的人。")}
+      <div class="card">${
+        list.length
+          ? `<div class="table-wrap"><table class="table"><thead><tr><th>名字</th><th>平台</th><th>來源</th><th>標籤</th><th>最後互動</th></tr></thead><tbody>
+            ${list
+              .map(
+                (c) => `<tr style="cursor:pointer" data-href="#contacts/${c.id}">
+                <td class="primary-cell"><div class="row" style="gap:10px;flex-wrap:nowrap"><div class="avatar" style="width:28px;height:28px;font-size:12px">${esc((c.first_name || "?").slice(0, 1))}</div>${esc([c.first_name, c.last_name].filter(Boolean).join(" ") || "（未取得名字）")}</div></td>
+                <td>${platformBadge(c.platform)}</td>
+                <td>${c.source_ad_id ? `<span class="badge brand">廣告 ${esc(c.source_ad_id)}</span>` : c.source_ref ? `<span class="badge info">ref ${esc(c.source_ref)}</span>` : '<span class="muted">直接訊息</span>'}</td>
+                <td>${c.tags.map((t) => `<span class="badge">${esc(t)}</span>`).join(" ") || '<span class="subtle">—</span>'}</td>
+                <td class="muted nowrap">${ago(c.last_seen)}</td></tr>`,
+              )
+              .join("")}</tbody></table></div>`
+          : empty("users", "還沒有聯絡人", "連接粉絲專頁並開始投放廣告後，客人會出現在這裡。", `<a class="btn" href="#connections">連接帳號</a>`)
+      }</div></div>`;
+    $$("[data-href]", el).forEach((tr) => (tr.onclick = () => (location.hash = tr.dataset.href)));
+  };
+  async function renderContact(el, id) {
+    const { contact: c, events: evs } = await api(`/contacts/${id}`);
+    const name = [c.first_name, c.last_name].filter(Boolean).join(" ") || "（未取得名字）";
+    el.innerHTML = `<div class="page">
+      ${backLink("#contacts", "聯絡人")}
+      ${pageHead(name, `${platformBadge(c.platform)} · 第一次互動 ${fmtDate(c.first_seen)}`, `<button class="btn btn-danger" id="c-del">${icon("trash")}刪除</button>`)}
+      <div class="editor" style="grid-template-columns:minmax(0,1fr) 340px">
+        <div class="card"><div class="card-head"><h3>互動記錄</h3></div>${evs.length ? `<div class="timeline">${evs.map(tlItem).join("")}</div>` : empty("activity", "沒有記錄", "")}</div>
+        <div class="stack">
+          <div class="card card-body"><dl class="kv">
+            <dt>來源廣告</dt><dd>${esc(c.source_ad_id) || "—"}</dd>
+            <dt>ref 參數</dt><dd>${esc(c.source_ref) || "—"}</dd>
+            <dt>標籤</dt><dd>${c.tags.map((t) => `<span class="badge">${esc(t)}</span>`).join(" ") || "—"}</dd>
+            <dt>最後互動</dt><dd>${fmtTime(c.last_seen)}</dd>
+          </dl></div>
+          <div class="card card-body stack-sm">
+            <b>傳送訊息</b><p class="small muted">Meta 規定只能在客人最後一次互動後 24 小時內主動傳訊息。</p>
+            <textarea class="input" id="m-text" placeholder="輸入訊息…" style="min-height:80px"></textarea>
+            <div class="row end"><button class="btn btn-primary btn-sm" id="m-send" data-busy="傳送中">傳送</button></div>
+          </div>
+        </div>
+      </div></div>`;
+    $("#m-send").onclick = (e) => busy(e.currentTarget, async () => {
+      try { await api(`/contacts/${id}/send`, { method: "POST", body: { text: $("#m-text").value } }); toast("已傳送"); renderContact(el, id); } catch (err) { toast(err.message, true); }
+    });
+    $("#c-del").onclick = async () => {
+      if (!(await confirmDialog("刪除聯絡人", "會刪除這位聯絡人的資料，無法復原。", "刪除", true))) return;
+      await api(`/contacts/${id}`, { method: "DELETE" });
+      location.hash = "#contacts";
     };
   }
-  function renderOutgoing(m) {
-    if (m.attachment?.type === "template") {
-      const p = m.attachment.payload;
-      return `<div class="bubble">${esc(p.text)}${(p.buttons || []).map((b) => `<span class="pbtn">${esc(b.title)}${b.url ? " ↗" : ""}</span>`).join("")}</div>`;
-    }
-    if (m.attachment?.type === "image") return `<div class="bubble"><img src="${esc(m.attachment.payload.url)}" style="max-width:100%;border-radius:8px"/></div>`;
-    let html = `<div class="bubble">${esc(m.text)}</div>`;
-    if (m.quick_replies) html += `<div class="chips">${m.quick_replies.map((q) => `<span class="chip">${esc(q.title)}</span>`).join("")}</div>`;
-    return html;
-  }
 
-  /* ---------- 啟動 ---------- */
+  /* =========================================================
+     Activity
+     ========================================================= */
+  const EV = {
+    automation: ["自動回覆", "brand"], sent: ["已送出", "success"], message: ["收到訊息", ""], postback: ["按下按鈕", ""], referral: ["廣告進入", "info"],
+    click: ["點擊連結", "success"], info: ["系統", "info"], warning: ["注意", "warning"], error: ["錯誤", "danger"],
+  };
+  const tlItem = (e) => {
+    const [label, cls] = EV[e.type] || [e.type, ""];
+    return `<div class="tl-item"><div class="when">${fmtTime(e.created_at)}</div><div><span class="badge ${cls}">${label}</span> <span>${esc(e.summary)}</span></div></div>`;
+  };
+  PAGES.activity = async (el, _args, query) => {
+    const all = isOwner() && query.get("scope") === "all";
+    const [evs, lk] = await Promise.all([api(`/events${all ? "?scope=all" : ""}`), api("/links")]);
+    el.innerHTML = `<div class="page">
+      ${pageHead("活動記錄", "收到的訊息、送出的回覆與任何問題，都記錄在這裡。", `${isOwner() ? `<a class="btn btn-sm" href="${all ? "#activity" : "#activity?scope=all"}">${all ? "只看我的" : "看全平台"}</a>` : ""}<button class="btn btn-sm" id="ref">${icon("refresh")}重新整理</button>`)}
+      <div class="editor" style="grid-template-columns:minmax(0,1fr) 340px">
+        <div class="card">${evs.length ? `<div class="timeline">${evs.map((e) => tlItem(e).replace('<span>' + esc(e.summary) + "</span>", `<span>${esc(e.summary)}</span>${e.contact_id ? ` <a class="small" href="#contacts/${e.contact_id}">查看聯絡人</a>` : ""}`)).join("")}</div>` : empty("activity", "還沒有活動", "有人傳訊息或點廣告後，這裡就會開始出現記錄。")}</div>
+        <div class="card"><div class="card-head"><div><h3>導購連結</h3><p>按鈕連結的點擊次數</p></div></div>
+          ${lk.length ? `<div class="timeline">${lk.map((l) => `<div class="tl-item" style="grid-template-columns:1fr auto"><div class="small" style="word-break:break-all">${esc(l.url)}</div><b>${num(l.clicks)}</b></div>`).join("")}</div>` : `<div class="card-body small muted">建立含按鈕的自動回覆後，會自動產生追蹤連結。</div>`}
+        </div>
+      </div></div>`;
+    $("#ref").onclick = () => PAGES.activity(el, [], query);
+  };
+
+  /* =========================================================
+     Billing
+     ========================================================= */
+  PAGES.billing = async (el) => {
+    const b = await api("/billing");
+    state.me.user.subscription = b.subscription;
+    renderPlanChip();
+    const sub = b.subscription;
+    const status = {
+      owner: ["平台擁有者", "brand", "你不受方案限制。下面的購買按鈕可用來測試付款流程。"],
+      paid: ["付費方案", "success", `到期日 ${fmtDate(sub.until)}，剩 ${sub.days_left} 天。再次購買會從到期日往後延長。`],
+      trial: ["免費試用", "info", `試用到 ${fmtDate(sub.until)}，剩 ${sub.days_left} 天。購買後從今天起算。`],
+      expired: ["已到期", "danger", `已於 ${fmtDate(sub.until)} 到期，自動回覆已暫停。購買後立即恢復。`],
+      none: ["尚未開通", "danger", "購買方案以開始使用。"],
+    }[sub.source];
+    const best = b.plans.reduce((m, p) => (p.months > (m?.months || 0) ? p : m), null);
+    const features = ["無限自動回覆", "Messenger 與 Instagram", "導購連結點擊追蹤", "聯絡人與來源記錄"];
+    el.innerHTML = `<div class="page">
+      ${pageHead("方案與付款", "")}
+      <div class="stack">
+        <div class="card card-body row between"><div><div class="row"><b style="font-size:15px">目前方案</b><span class="badge ${status[1]}">${status[0]}</span></div><p class="muted" style="margin-top:4px">${status[2]}</p></div></div>
+        ${!b.payuni_configured ? `<div class="banner warning">${icon("info")}<div class="grow">${isOwner() ? "還沒設定 PayUni 金流，用戶無法線上付款。" : "線上付款暫時無法使用，請聯絡平台管理員。"}</div>${isOwner() ? '<a class="btn btn-sm btn-primary" href="#setup/payuni">前往設定</a>' : ""}</div>` : b.payuni_sandbox ? `<div class="banner info">${icon("flask")}<div class="grow">金流目前是<b>測試模式</b>，不會真的扣款。</div></div>` : ""}
+        <div class="plan-grid">
+          ${b.plans
+            .map((p) => {
+              const featured = best && p.id === best.id && b.plans.length > 1;
+              return `<div class="plan-card ${featured ? "featured" : ""}">
+                ${featured ? '<span class="badge brand tag">最划算</span>' : ""}
+                <div class="pn">${esc(p.name)}</div>
+                <div class="pp">${money(p.price)} <small>/ ${p.months === 1 ? "月" : p.months === 12 ? "年" : `${p.months} 個月`}</small></div>
+                <div class="small muted">${p.months > 1 ? `相當於每月 ${money(Math.round(p.price / p.months))}` : "單月購買，到期前會提醒續約"}</div>
+                <ul class="feat">${features.map((f) => `<li>${icon("check")}${f}</li>`).join("")}</ul>
+                <button class="btn ${featured ? "btn-primary" : ""} btn-block" data-buy="${p.id}" data-busy="前往付款" ${b.payuni_configured ? "" : "disabled"}>${sub.source === "paid" ? "延長" : "選擇此方案"}</button>
+              </div>`;
+            })
+            .join("") || '<p class="muted">目前沒有可購買的方案。</p>'}
+        </div>
+        <p class="small muted">${icon("shield").replace("<svg", '<svg style="width:14px;height:14px;vertical-align:-2px"')} 付款由 PAYUNi 統一金流安全處理，支援信用卡等方式。付款完成後會自動回到這裡。</p>
+        <div class="card"><div class="card-head"><h3>付款記錄</h3></div>
+          ${b.orders.length
+            ? `<div class="table-wrap"><table class="table"><thead><tr><th>日期</th><th>方案</th><th>金額</th><th>狀態</th><th>訂單編號</th></tr></thead><tbody>${b.orders
+                .map((o) => `<tr><td class="nowrap">${fmtDate(o.created_at)}</td><td>${esc(o.plan_name)}</td><td>${money(o.amount)}</td><td>${orderBadge(o.status)}</td><td class="mono muted">${esc(o.order_no)}</td></tr>`)
+                .join("")}</tbody></table></div>`
+            : `<div class="card-body small muted">還沒有付款記錄。</div>`}
+        </div>
+      </div></div>`;
+    $$("[data-buy]", el).forEach((btn) => {
+      btn.onclick = () =>
+        busy(btn, async () => {
+          try {
+            const r = await api("/billing/checkout", { method: "POST", body: { plan_id: Number(btn.dataset.buy) } });
+            const form = document.createElement("form");
+            form.method = "POST";
+            form.action = r.action;
+            for (const [k, v] of Object.entries(r.fields)) {
+              const i = document.createElement("input");
+              i.type = "hidden";
+              i.name = k;
+              i.value = v;
+              form.appendChild(i);
+            }
+            document.body.appendChild(form);
+            form.submit();
+            await new Promise(() => {}); // 保持 loading 直到離開頁面
+          } catch (err) {
+            toast(err.message, true);
+          }
+        });
+    });
+  };
+  const orderBadge = (s) => (s === "paid" ? '<span class="badge success">已付款</span>' : s === "failed" ? '<span class="badge danger">失敗</span>' : '<span class="badge">未完成</span>');
+
+  /* =========================================================
+     Account
+     ========================================================= */
+  PAGES.account = async (el) => {
+    const u = state.me.user;
+    el.innerHTML = `<div class="page narrow">
+      ${pageHead("帳號設定", "")}
+      <div class="stack">
+        <div class="card card-body"><dl class="kv"><dt>名字</dt><dd>${esc(u.name)}</dd><dt>Email</dt><dd>${esc(u.email)}</dd><dt>角色</dt><dd>${u.role === "owner" ? "平台擁有者" : "用戶"}</dd><dt>加入日期</dt><dd>${fmtDate(u.created_at)}</dd></dl></div>
+        <div class="card"><div class="card-head"><h3>變更密碼</h3></div><div class="card-body stack">
+          <label class="field"><span class="label">目前密碼</span><input class="input" type="password" id="pw-cur" autocomplete="current-password"/></label>
+          <label class="field"><span class="label">新密碼</span><input class="input" type="password" id="pw-new" autocomplete="new-password" placeholder="至少 8 個字元"/></label>
+        </div><div class="card-foot"><button class="btn btn-primary" id="pw-save" data-busy="更新中">更新密碼</button></div></div>
+      </div></div>`;
+    $("#pw-save").onclick = (e) => busy(e.currentTarget, async () => {
+      try { await api("/auth/password", { method: "POST", body: { current: $("#pw-cur").value, password: $("#pw-new").value } }); toast("密碼已更新"); $("#pw-cur").value = $("#pw-new").value = ""; } catch (err) { toast(err.message, true); }
+    });
+  };
+
+  /* =========================================================
+     Admin: platform setup wizard
+     ========================================================= */
+  const SETUP_STEPS = [
+    { id: "general", title: "基本資料", desc: "名稱與試用設定" },
+    { id: "meta", title: "Meta App", desc: "讓用戶能連接粉絲專頁" },
+    { id: "payuni", title: "PayUni 金流", desc: "讓用戶能線上付款" },
+    { id: "plans", title: "方案與價格", desc: "用戶可購買的方案" },
+  ];
+  PAGES.setup = async (el, args) => {
+    if (!isOwner()) return (location.hash = "#home");
+    const [s, plans] = await Promise.all([api("/settings"), api("/billing/plans")]);
+    const metaDone = !!(s.meta_app_id && s.meta_app_secret_set);
+    const done = { general: !!store.get(ukey("setup_general")) || metaDone, meta: !!(s.meta_app_id && s.meta_app_secret_set), payuni: !!(s.payuni_mer_id && s.payuni_hash_key_set && s.payuni_hash_iv_set), plans: plans.some((p) => p.active) };
+    const step = SETUP_STEPS.find((x) => x.id === args[0])?.id || SETUP_STEPS.find((x) => !done[x.id])?.id || "general";
+    const idx = SETUP_STEPS.findIndex((x) => x.id === step);
+    const next = SETUP_STEPS[idx + 1];
+    el.innerHTML = `<div class="page">
+      ${pageHead("平台設定", "設定一次就好。完成後，用戶可以自行註冊、連接專頁並付款。")}
+      <div class="setup">
+        <nav class="stepper" aria-label="設定步驟">${SETUP_STEPS.map((x, i) => `<a href="#setup/${x.id}" class="${x.id === step ? "active" : ""} ${done[x.id] ? "done" : ""}"><span class="sn">${done[x.id] ? icon("check") : i + 1}</span><span><div>${x.title}</div><div class="sd">${x.desc}</div></span></a>`).join("")}</nav>
+        <div id="setup-body"></div>
+      </div></div>`;
+    const body = $("#setup-body");
+    const goNext = () => (location.hash = next ? `#setup/${next.id}` : "#home");
+    const footer = (label = next ? "儲存並繼續" : "完成設定") => `<div class="card-foot"><button class="btn btn-primary" id="save-step" data-busy="儲存中">${label}${next ? icon("right") : icon("check")}</button></div>`;
+    const save = async (payload) => {
+      await api("/settings", { method: "POST", body: payload });
+      state.me = await api("/auth/me");
+    };
+
+    if (step === "general") {
+      body.innerHTML = `<div class="card"><div class="card-head"><div><h3>基本資料</h3><p>用戶在登入頁和後台看到的資訊。</p></div></div><div class="card-body stack">
+        <label class="field"><span class="label">平台名稱</span><input class="input" id="g-name" value="${esc(s.app_name)}"/></label>
+        <div class="grid-2">
+          <label class="field"><span class="label">免費試用天數</span><input class="input" type="number" min="0" max="365" id="g-trial" value="${s.trial_days}"/><span class="help">填 0 代表不提供試用。</span></label>
+          <label class="field"><span class="label">開放註冊</span><select class="input" id="g-signup"><option value="1" ${s.allow_signup ? "selected" : ""}>開放，任何人都能註冊</option><option value="0" ${!s.allow_signup ? "selected" : ""}>關閉，只有現有用戶能登入</option></select></label>
+        </div>
+        <label class="field"><span class="label">對外網址（選填）</span><input class="input" id="g-url" value="${esc(s.public_url)}" placeholder="${esc(s.resolved_public_url)}"/><span class="help">綁定自己的網域後再填。留空時會自動使用目前的網址：${esc(s.resolved_public_url)}</span></label>
+      </div>${footer()}</div>`;
+      $("#save-step").onclick = (e) => busy(e.currentTarget, async () => {
+        try { await save({ app_name: $("#g-name").value, trial_days: Number($("#g-trial").value), allow_signup: $("#g-signup").value === "1", public_url: $("#g-url").value }); store.set(ukey("setup_general"), true); toast("已儲存"); goNext(); } catch (err) { toast(err.message, true); }
+      });
+    }
+
+    if (step === "meta") {
+      body.innerHTML = `<div class="card"><div class="card-head"><div><h3>連接 Meta App</h3><p>所有用戶都會透過這個 App 連接他們的粉絲專頁。大約 10 分鐘。</p></div><a class="btn btn-sm" href="https://developers.facebook.com/apps/" target="_blank" rel="noopener">${icon("external")}Meta 開發者後台</a></div>
+        <div class="card-body"><ol class="guide">
+          <li><div><b>建立 App</b><p class="muted small">在 Meta 開發者後台按「建立應用程式」，用途選「其他」，類型選「商家」。</p></div></li>
+          <li><div><b>加入三個產品</b><p class="muted small">在 App 主控板加入 <b>Facebook 登入（商家版）</b>、<b>Messenger</b>、<b>Instagram</b>。</p></div></li>
+          <li><div><b>貼上 App 金鑰</b><p class="muted small">在「應用程式設定 → 基本資料」找到 App ID 與 App 密鑰。</p>
+            <div class="grid-2">
+              <label class="field"><span class="label">App ID</span><input class="input" id="m-id" value="${esc(s.meta_app_id)}" inputmode="numeric" placeholder="1234567890123456"/></label>
+              <label class="field"><span class="label">App 密鑰 ${s.meta_app_secret_set ? '<span class="badge success">已儲存</span>' : ""}</span><input class="input" id="m-secret" type="password" placeholder="${s.meta_app_secret_set ? "已儲存，留空不更改" : "貼上 App 密鑰"}"/></label>
+            </div>
+            <div class="row"><button class="btn" id="m-test" data-busy="測試中">${icon("check")}儲存並測試</button><span id="m-test-result"></span></div>
+          </div></li>
+          <li><div><b>設定登入回呼網址</b><p class="muted small">到「Facebook 登入（商家版）→ 設定」，把下面的網址貼到「有效的 OAuth 重新導向 URI」並儲存。</p>${copyField(s.oauth_redirect_url)}</div></li>
+          <li><div><b>登記 Webhook</b><p class="muted small">讓 Meta 把訊息送到這個平台。按下按鈕自動完成。</p>
+            <div class="row"><button class="btn" id="m-hook" data-busy="登記中" ${s.meta_app_secret_set ? "" : "disabled"}>${icon("zap")}自動登記 Webhook</button><span id="m-hook-result"></span></div>
+            <details class="adv"><summary>${icon("right")}自動登記失敗？手動設定</summary>
+              <div class="stack-sm" style="margin-top:10px"><p class="small muted">在 Messenger 與 Instagram 產品的「Webhooks」設定填入：</p>
+                <span class="small"><b>回呼網址</b></span>${copyField(s.webhook_url)}
+                <span class="small"><b>驗證權杖</b></span>${copyField(s.verify_token)}
+                <span class="small"><b>訂閱欄位</b>：${s.webhook_fields.map((f) => `<code>${f}</code>`).join("、")}</span>
+              </div></details>
+          </div></li>
+          <li><div><b>送審並上線</b><p class="muted small">App 在開發模式時，只有你加入的測試人員能收到自動回覆。要開放給所有客人，在「應用程式審查」申請 <code>pages_messaging</code>、<code>pages_show_list</code>、<code>pages_manage_metadata</code>、<code>instagram_basic</code>、<code>instagram_manage_messages</code>，通過後切換到上線模式。可以先完成其他設定，不影響使用。</p></div></li>
+        </ol></div>${footer()}</div>`;
+      const saveKeys = async () => {
+        const payload = { meta_app_id: $("#m-id").value.trim() };
+        if ($("#m-secret").value.trim()) payload.meta_app_secret = $("#m-secret").value.trim();
+        await save(payload);
+      };
+      $("#m-test").onclick = (e) => busy(e.currentTarget, async () => {
+        const out = $("#m-test-result");
+        try {
+          await saveKeys();
+          const r = await api("/settings/test-meta", { method: "POST" });
+          out.innerHTML = `<span class="result-ok">${icon("check")}連線成功：${esc(r.app.name)}</span>`;
+          $("#m-hook").disabled = false;
+        } catch (err) {
+          out.innerHTML = `<span class="result-err">${icon("alert")}<span>${esc(err.message)}</span></span>`;
+        }
+      });
+      $("#m-hook").onclick = (e) => busy(e.currentTarget, async () => {
+        const out = $("#m-hook-result");
+        try {
+          const r = await api("/webhook/register", { method: "POST" });
+          const bad = Object.entries(r.results).filter(([, v]) => !v.ok);
+          out.innerHTML = bad.length
+            ? `<span class="result-err">${icon("alert")}<span>${bad.map(([k, v]) => `${k === "page" ? "Messenger" : "Instagram"}：${esc(v.error)}`).join("<br/>")}</span></span>`
+            : `<span class="result-ok">${icon("check")}Messenger 與 Instagram 都已登記</span>`;
+        } catch (err) {
+          out.innerHTML = `<span class="result-err">${icon("alert")}<span>${esc(err.message)}</span></span>`;
+        }
+      });
+      $("#save-step").onclick = (e) => busy(e.currentTarget, async () => {
+        try { await saveKeys(); toast("已儲存"); goNext(); } catch (err) { toast(err.message, true); }
+      });
+    }
+
+    if (step === "payuni") {
+      body.innerHTML = `<div class="card"><div class="card-head"><div><h3>PAYUNi 統一金流</h3><p>用戶購買方案時會導到 PayUni 的安全付款頁。</p></div><a class="btn btn-sm" href="https://www.payuni.com.tw/" target="_blank" rel="noopener">${icon("external")}PAYUNi 官網</a></div>
+        <div class="card-body"><ol class="guide">
+          <li><div><b>申請商店</b><p class="muted small">在 PAYUNi 申請商店帳號。建議先用<b>測試區</b>帳號，確認流程沒問題再換正式區。</p></div></li>
+          <li><div><b>貼上串接資訊</b><p class="muted small">在 PayUni 商店後台的「串接資訊」頁面可以找到。</p>
+            <label class="field"><span class="label">商店代號（MerID）</span><input class="input" id="p-mer" value="${esc(s.payuni_mer_id)}"/></label>
+            <div class="grid-2">
+              <label class="field"><span class="label">Hash Key ${s.payuni_hash_key_set ? '<span class="badge success">已儲存</span>' : ""}</span><input class="input" id="p-key" type="password" maxlength="32" placeholder="${s.payuni_hash_key_set ? "已儲存，留空不更改" : "32 個字元"}"/><span class="error-text" id="e-key"></span></label>
+              <label class="field"><span class="label">Hash IV ${s.payuni_hash_iv_set ? '<span class="badge success">已儲存</span>' : ""}</span><input class="input" id="p-iv" type="password" maxlength="16" placeholder="${s.payuni_hash_iv_set ? "已儲存，留空不更改" : "16 個字元"}"/><span class="error-text" id="e-iv"></span></label>
+            </div>
+            <label class="row" style="gap:10px;cursor:pointer"><span class="switch"><input type="checkbox" id="p-sandbox" ${s.payuni_sandbox ? "checked" : ""}/><span class="slider"></span></span><span><b>測試模式</b> <span class="muted small">使用 PayUni 測試區，不會真的扣款</span></span></label>
+          </div></li>
+          <li><div><b>不需要其他設定</b><p class="muted small">付款結果通知網址會隨每筆交易自動帶給 PayUni。若 PayUni 後台要求填寫，使用下面的網址：</p>
+            <span class="small"><b>通知網址（NotifyURL）</b></span>${copyField(s.payuni_notify_url)}
+            <span class="small"><b>返回網址（ReturnURL）</b></span>${copyField(s.payuni_return_url)}</div></li>
+          <li><div><b>測試一次</b><p class="muted small">儲存後到「方案與付款」按下購買，用 PayUni 測試卡完成付款，確認付款記錄顯示「已付款」。</p></div></li>
+        </ol></div>${footer()}</div>`;
+      $("#save-step").onclick = (e) => busy(e.currentTarget, async () => {
+        const key = $("#p-key").value.trim();
+        const iv = $("#p-iv").value.trim();
+        $("#e-key").textContent = key && key.length !== 32 ? `需要 32 個字元，目前 ${key.length} 個` : "";
+        $("#e-iv").textContent = iv && iv.length !== 16 ? `需要 16 個字元，目前 ${iv.length} 個` : "";
+        if ((key && key.length !== 32) || (iv && iv.length !== 16)) return;
+        try {
+          await save({ payuni_mer_id: $("#p-mer").value.trim(), payuni_hash_key: key, payuni_hash_iv: iv, payuni_sandbox: $("#p-sandbox").checked });
+          toast("已儲存");
+          goNext();
+        } catch (err) {
+          toast(err.message, true);
+        }
+      });
+    }
+
+    if (step === "plans") {
+      const row = (p) => `<tr data-id="${p.id || ""}">
+        <td><input class="input" data-f="name" value="${esc(p.name)}" placeholder="月繳方案"/></td>
+        <td><input class="input" data-f="price" type="number" min="1" value="${esc(p.price)}" style="width:110px" placeholder="990"/></td>
+        <td><select class="input" data-f="months" style="width:110px">${[1, 3, 6, 12, 24].map((m) => `<option value="${m}" ${Number(p.months) === m ? "selected" : ""}>${m} 個月</option>`).join("")}</select></td>
+        <td><label class="switch"><input type="checkbox" data-f="active" ${p.active ? "checked" : ""} aria-label="上架"/><span class="slider"></span></label></td>
+        <td class="actions">${p.id ? `<button class="btn btn-ghost btn-sm icon-btn btn-danger" data-del-plan="${p.id}" aria-label="刪除">${icon("trash")}</button>` : ""}</td></tr>`;
+      body.innerHTML = `<div class="card"><div class="card-head"><div><h3>方案與價格</h3><p>價格為新台幣，含稅。用戶購買後會從到期日往後延長。</p></div><button class="btn btn-sm" id="add-plan">${icon("plus")}新增方案</button></div>
+        <div class="table-wrap"><table class="table"><thead><tr><th>名稱</th><th>價格</th><th>期間</th><th>上架</th><th></th></tr></thead><tbody id="plan-rows">${plans.map(row).join("")}</tbody></table></div>
+        ${footer("儲存並完成")}</div>`;
+      $("#add-plan").onclick = () => $("#plan-rows").insertAdjacentHTML("beforeend", row({ name: "", price: "", months: 1, active: 1 }));
+      $$("[data-del-plan]", body).forEach((b) => (b.onclick = async () => {
+        if (!(await confirmDialog("刪除方案", "已購買的用戶不受影響。", "刪除", true))) return;
+        await api(`/billing/plans/${b.dataset.delPlan}`, { method: "DELETE" });
+        PAGES.setup(el, ["plans"]);
+      }));
+      $("#save-step").onclick = (e) => busy(e.currentTarget, async () => {
+        try {
+          const rows = $$("#plan-rows tr");
+          for (const [i, tr] of rows.entries()) {
+            const g = (f) => $(`[data-f="${f}"]`, tr);
+            const name = g("name").value.trim();
+            if (!name && !g("price").value) continue;
+            const id = tr.dataset.id ? Number(tr.dataset.id) : undefined;
+            const existing = plans.find((p) => p.id === id);
+            await api("/billing/plans", { method: "POST", body: { id, code: existing?.code || `plan${Date.now()}${i}`, name, price: Number(g("price").value), months: Number(g("months").value), active: g("active").checked, sort: i + 1 } });
+          }
+          toast("設定完成 🎉");
+          location.hash = "#home";
+        } catch (err) {
+          toast(err.message, true);
+        }
+      });
+    }
+  };
+
+  /* =========================================================
+     Admin: users & orders
+     ========================================================= */
+  const subBadge = (sub) =>
+    sub.source === "owner" ? '<span class="badge brand">擁有者</span>'
+      : sub.source === "paid" ? `<span class="badge success">付費 · ${fmtDate(sub.until)}</span>`
+        : sub.source === "trial" ? `<span class="badge info">試用 · 剩 ${sub.days_left} 天</span>`
+          : '<span class="badge danger">已到期</span>';
+  PAGES["admin-users"] = async (el) => {
+    if (!isOwner()) return (location.hash = "#home");
+    const list = await api("/users");
+    el.innerHTML = `<div class="page">${pageHead("用戶", `共 ${list.length} 位`)}
+      <div class="card"><div class="table-wrap"><table class="table"><thead><tr><th>用戶</th><th>方案</th><th>連接 / 自動回覆</th><th>註冊日期</th><th></th></tr></thead><tbody>
+      ${list.map((u) => `<tr><td><b>${esc(u.name)}</b><div class="small muted">${esc(u.email)}</div></td><td>${subBadge(u.subscription)}</td><td>${u.channels} / ${u.automations}</td><td class="nowrap muted">${fmtDate(u.created_at)}</td>
+        <td class="actions">${u.role === "owner" ? "" : `<button class="btn btn-sm" data-grant="${u.id}">延長方案</button>`}</td></tr>`).join("")}
+      </tbody></table></div></div></div>`;
+    $$("[data-grant]", el).forEach((b) => (b.onclick = () => {
+      const u = list.find((x) => x.id === Number(b.dataset.grant));
+      const m = modal({
+        title: `延長 ${u.name || u.email} 的方案`,
+        size: "sm",
+        body: `<div class="stack"><p class="muted small">用於匯款、贈送或補償。會建立一筆金額為 0 的訂單記錄。</p><label class="field"><span class="label">延長期間</span><select class="input" id="gm">${[1, 3, 6, 12].map((x) => `<option value="${x}">${x} 個月</option>`).join("")}</select></label></div>`,
+        foot: `<button class="btn" data-close>取消</button><button class="btn btn-primary" id="gm-ok" data-busy="處理中">確認延長</button>`,
+      });
+      $("#gm-ok", m.el).onclick = (e) => busy(e.currentTarget, async () => {
+        try { const r = await api("/billing/grant", { method: "POST", body: { user_id: u.id, months: Number($("#gm", m.el).value) } }); m.close(); toast(`已延長至 ${fmtDate(r.paid_until)}`); PAGES["admin-users"](el); } catch (err) { toast(err.message, true); }
+      });
+    }));
+  };
+  PAGES["admin-orders"] = async (el) => {
+    if (!isOwner()) return (location.hash = "#home");
+    const list = await api("/billing/orders/all");
+    const revenue = list.filter((o) => o.status === "paid").reduce((s, o) => s + o.amount, 0);
+    el.innerHTML = `<div class="page">${pageHead("訂單", `已付款總額 ${money(revenue)}`)}
+      <div class="card">${list.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>日期</th><th>用戶</th><th>方案</th><th>金額</th><th>狀態</th><th>PayUni 交易序號</th></tr></thead><tbody>
+        ${list.map((o) => `<tr><td class="nowrap">${fmtTime(o.created_at)}</td><td>${esc(o.email || "")}</td><td>${esc(o.plan_name)}</td><td>${money(o.amount)}</td><td>${orderBadge(o.status)}</td><td class="mono muted">${esc(o.payuni_trade_no || "—")}</td></tr>`).join("")}
+      </tbody></table></div>` : empty("receipt", "還沒有訂單", "用戶購買方案後會出現在這裡。")}</div></div>`;
+  };
+
+  /* =========================================================
+     Boot
+     ========================================================= */
+  function startApp() {
+    renderShell();
+    route();
+  }
   (async () => {
     try {
       state.me = await api("/auth/me");
-      $("#gate-app-name").textContent = state.me.app_name || "Lakeze Go";
-      $("#gate-trial").textContent = state.me.trial_days > 0 ? `免費試用 ${state.me.trial_days} 天` : "註冊即可開始";
-      if (state.me.needs_setup) {
-        $("#signup-first").classList.remove("hidden");
-        $("#tab-signup").click();
-      } else if (!state.me.allow_signup) $("#tab-signup").classList.add("hidden");
-      if (state.me.authenticated) {
-        showShell();
-        route();
-      } else showGate();
     } catch {
-      showGate();
+      state.me = { authenticated: false };
     }
+    document.title = appName();
+    if (state.me.authenticated) startApp();
+    else renderAuth(state.me.needs_setup ? "signup" : "login");
   })();
 })();

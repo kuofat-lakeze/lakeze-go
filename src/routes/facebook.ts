@@ -39,12 +39,12 @@ export function facebookRouter(db: DB, fetchImpl: typeof fetch = fetch): Router 
   router.get("/", (req, res) => {
     const user = currentUser(db, req);
     if (!user) {
-      res.redirect("/#channels");
+      res.redirect("/#connections");
       return;
     }
     const cfg = metaConfig(db);
     if (!cfg.appId || !cfg.appSecret) {
-      res.redirect("/#channels?error=" + encodeURIComponent("平台尚未設定 Meta App，請聯絡管理員"));
+      res.redirect("/#connections?error=" + encodeURIComponent("平台尚未設定 Meta App，請聯絡管理員"));
       return;
     }
     const state = randomBytes(16).toString("hex");
@@ -56,7 +56,7 @@ export function facebookRouter(db: DB, fetchImpl: typeof fetch = fetch): Router 
     const user = currentUser(db, req);
     const fail = (msg: string) => {
       events.log(db, { user_id: user?.id ?? null, type: "warning", summary: `Facebook 連接失敗：${msg}` });
-      res.redirect("/#channels?error=" + encodeURIComponent(msg));
+      res.redirect("/#connections?error=" + encodeURIComponent(msg));
     };
     if (!user) return fail("尚未登入");
     const state = readCookie(req, STATE_COOKIE);
@@ -74,7 +74,7 @@ export function facebookRouter(db: DB, fetchImpl: typeof fetch = fetch): Router 
       const id = randomBytes(12).toString("hex");
       pending.set(id, { userId: user.id, pages, expires: Date.now() + PENDING_TTL_MS });
       res.setHeader("set-cookie", `${STATE_COOKIE}=; Path=/; HttpOnly; Max-Age=0`);
-      res.redirect(`/#channels/connect/${id}`);
+      res.redirect(`/#connections/connect/${id}`);
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));
     }

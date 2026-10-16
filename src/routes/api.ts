@@ -8,7 +8,7 @@ import { matchAutomation } from "../engine/matcher.js";
 import { parseWebhook } from "../meta/parser.js";
 import { handleIncomingEvent } from "../engine/handler.js";
 import { allowSignup, appName, KEYS, metaConfig, payuniConfig, resolvePublicUrl, trialDays } from "../settings.js";
-import { listAppWebhooks, registerAppWebhook, setGetStarted, subscribePage, WEBHOOK_FIELDS } from "../meta/graph.js";
+import { listAppWebhooks, registerAppWebhook, setGetStarted, subscribePage, verifyApp, WEBHOOK_FIELDS } from "../meta/graph.js";
 import { callbackUrl, clearPending, getPending } from "./facebook.js";
 import { publicUser, requireOwner, userOf } from "./auth.js";
 import { subscriptionStatus } from "../billing/subscription.js";
@@ -128,6 +128,17 @@ export function apiRouter(opts: ApiOptions): Router {
     const cfg = metaConfig(db);
     if (!cfg.appId || !cfg.appSecret) throw new HttpError(400, "請先填入 Meta App ID 與 App Secret");
     res.json(await listAppWebhooks(cfg, fetchImpl));
+  });
+  /** 測試 Meta App ID / Secret 是否正確 */
+  router.post("/settings/test-meta", requireOwner, async (_req, res) => {
+    const cfg = metaConfig(db);
+    if (!cfg.appId || !cfg.appSecret) throw new HttpError(400, "請先填入並儲存 App ID 與 App Secret");
+    try {
+      const app = await verifyApp(cfg, fetchImpl);
+      res.json({ ok: true, app });
+    } catch (err) {
+      throw new HttpError(400, `Meta 回應：${err instanceof Error ? err.message : String(err)}。請確認 App ID 與 App Secret 是同一個 App 的。`);
+    }
   });
 
   /* ---- 使用者管理（擁有者） ---- */
