@@ -5,6 +5,7 @@ import type { DB, User } from "../db.js";
 import { users } from "../db.js";
 import { allowSignup, appName, hashPassword, sessionSecret, trialDays, verifyPassword } from "../settings.js";
 import { subscriptionStatus, trialEnd } from "../billing/subscription.js";
+import { seedExamples } from "../examples.js";
 
 const COOKIE = "lg_session";
 const SESSION_DAYS = 30;
@@ -130,6 +131,7 @@ export function authRouter(db: DB): Router {
       role: first ? "owner" : "member",
       trial_until: first ? null : trialEnd(trialDays(db)),
     });
+    seedExamples(db, u.id);
     setCookie(req, res, COOKIE, makeToken(sessionSecret(db), u.id), SESSION_DAYS * 86400);
     res.status(201).json({ ok: true, user: publicUser(u) });
   });

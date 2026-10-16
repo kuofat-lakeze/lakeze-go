@@ -59,6 +59,8 @@ export interface Automation {
   trigger_value: string;
   steps: Step[];
   triggered_count: number;
+  /** 系統預先建立、尚未被使用者修改過的範例（預設不啟用） */
+  is_example: number;
   created_at: string;
   updated_at: string;
 }

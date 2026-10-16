@@ -140,7 +140,16 @@ export function openDb(path: string): DB {
   db.exec("PRAGMA journal_mode = WAL;");
   db.exec("PRAGMA foreign_keys = ON;");
   db.exec(SCHEMA);
+  migrate(db);
   return db;
+}
+
+/** 對既有資料庫補上新欄位（SQLite 沒有 ADD COLUMN IF NOT EXISTS） */
+function migrate(db: DB) {
+  const hasColumn = (table: string, column: string) =>
+    (db.prepare(`PRAGMA table_info(${table})`).all() as Row[]).some((c) => c.name === column);
+  if (!hasColumn("automations", "is_example")) db.exec("ALTER TABLE automations ADD COLUMN is_example INTEGER NOT NULL DEFAULT 0");
+  if (!hasColumn("users", "examples_seeded")) db.exec("ALTER TABLE users ADD COLUMN examples_seeded INTEGER NOT NULL DEFAULT 0");
 }
 
 type Row = Record<string, unknown>;
@@ -327,7 +336,7 @@ export const channels = {
 };
 
 /* ---------- automations ---------- */
-export type AutomationInput = Omit<Automation, "id" | "triggered_count" | "created_at" | "updated_at">;
+export type AutomationInput = Omit<Automation, "id" | "triggered_count" | "is_example" | "created_at" | "updated_at">;
 
 export const automations = {
   list(db: DB, userId: number): Automation[] {
@@ -346,19 +355,31 @@ export const automations = {
     if (userId !== undefined && Number(r.user_id) !== userId) return undefined;
     return rowToAutomation(r);
   },
-  create(db: DB, a: AutomationInput): Automation {
+  create(db: DB, a: AutomationInput, opts: { isExample?: boolean } = {}): Automation {
     const res = db
       .prepare(
-        `INSERT INTO automations (user_id, name, enabled, priority, platform, channel_id, trigger_type, trigger_value, steps)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO automations (user_id, name, enabled, priority, platform, channel_id, trigger_type, trigger_value, steps, is_example)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(a.user_id, a.name, a.enabled ? 1 : 0, a.priority, a.platform, a.channel_id, a.trigger_type, a.trigger_value, JSON.stringify(a.steps));
+      .run(
+        a.user_id,
+        a.name,
+        a.enabled ? 1 : 0,
+        a.priority,
+        a.platform,
+        a.channel_id,
+        a.trigger_type,
+        a.trigger_value,
+        JSON.stringify(a.steps),
+        opts.isExample ? 1 : 0,
+      );
     return automations.get(db, Number(res.lastInsertRowid))!;
   },
+  /** 任何更新（含啟用）都代表使用者採用了它，所以會清掉範例標記 */
   update(db: DB, id: number, a: AutomationInput): Automation | undefined {
     db.prepare(
       `UPDATE automations SET name = ?, enabled = ?, priority = ?, platform = ?, channel_id = ?,
-         trigger_type = ?, trigger_value = ?, steps = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?`,
+         trigger_type = ?, trigger_value = ?, steps = ?, is_example = 0, updated_at = datetime('now') WHERE id = ? AND user_id = ?`,
     ).run(a.name, a.enabled ? 1 : 0, a.priority, a.platform, a.channel_id, a.trigger_type, a.trigger_value, JSON.stringify(a.steps), id, a.user_id);
     return automations.get(db, id, a.user_id);
   },

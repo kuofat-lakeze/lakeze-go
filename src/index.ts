@@ -2,6 +2,7 @@ import { config } from "./config.js";
 import { openDb, plans, settingsStore, users } from "./db.js";
 import { createGraphSender } from "./meta/sendApi.js";
 import { createApp } from "./app.js";
+import { seedExamplesForExistingUsers } from "./examples.js";
 import { hashPassword, KEYS, metaConfig, payuniConfig, resolvePublicUrl, seedFromEnv } from "./settings.js";
 
 const db = openDb(config.databasePath);
@@ -18,6 +19,8 @@ if (users.count(db) === 0 && process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWO
     trial_until: null,
   });
 }
+// 替還沒有範例的帳號（含本版之前註冊的）補上範例自動回覆
+seedExamplesForExistingUsers(db);
 
 const app = createApp({ db, sender: createGraphSender(() => metaConfig(db).graphVersion) });
 

@@ -540,6 +540,38 @@
     return `${esc(T?.t || a.trigger_type)}${a.trigger_value ? `<span class="muted">：${esc(a.trigger_value)}</span>` : ""}`;
   };
 
+  /* ---- guidance content ---- */
+  const TRIGGER_EXAMPLES = {
+    any_ad: { scene: "你投放了一支「秋季新品 8 折」的訊息廣告。有人按下廣告上的「傳送訊息」，Messenger 一打開就會收到這則回覆。", tip: "只跑一支廣告，或所有廣告都導到同一頁時，選這個最簡單。" },
+    ad: { scene: "你同時跑「咖啡豆」和「濾掛包」兩支廣告，想把客人分別帶到不同的商品頁。", tip: "廣告 ID 在廣告管理員 → 廣告層級的「廣告 ID」欄位，可以多個用逗號分開。" },
+    ref: { scene: "你在「講座報名」廣告的訊息範本裡設定參數 event_signup，這裡就填 event_signup。", tip: "比廣告 ID 好管理：之後換新廣告，只要沿用同一個 ref 就不用改這裡。" },
+    keyword: { scene: "客人傳「請問多少錢？」，因為裡面有「多少錢」，就會自動回覆價格頁。", tip: "多放幾種常見說法，用逗號分開。" },
+    get_started: { scene: "第一次私訊你的新朋友，按下「開始使用」時收到。從廣告進來的人會優先收到廣告的回覆。", tip: "" },
+    default: { scene: "客人傳的訊息都沒有符合其他規則時送出，例如「收到囉！我們會盡快回覆你」。", tip: "一個帳號只需要設定一個。" },
+  };
+  const USE_CASES = [
+    { k: "shop", t: "電商導購", msg: "嗨 {{first_name}} 👋 謝謝你對我們的商品有興趣！\n現在下單享首購 9 折，點下方按鈕直接選購 👇", btn: "立即選購" },
+    { k: "consult", t: "預約諮詢", msg: "{{first_name}} 你好！想了解更多細節嗎？\n留下資料，專人會在 24 小時內聯絡你 😊", btn: "預約免費諮詢" },
+    { k: "event", t: "活動報名", msg: "嗨 {{first_name}}，名額有限！\n點下方按鈕完成報名，我們會寄送行前通知給你 📩", btn: "立即報名" },
+    { k: "coupon", t: "領取優惠", msg: "🎁 {{first_name}}，這是給你的專屬優惠！\n點下方按鈕領取，限時 3 天有效。", btn: "領取優惠券" },
+    { k: "download", t: "免費下載", msg: "謝謝 {{first_name}}！你要的資料在這裡 👇\n有任何問題都可以直接回覆這則訊息。", btn: "免費下載" },
+    { k: "line", t: "導到 LINE", msg: "想更快收到回覆嗎？\n加入我們的 LINE 官方帳號，專人一對一服務 💬", btn: "加入 LINE" },
+  ];
+  const BUTTON_IDEAS = ["立即選購", "了解更多", "預約諮詢", "立即報名", "領取優惠", "加入 LINE"];
+  const UTM = "utm_source=meta&utm_medium=messenger&utm_campaign=auto_reply";
+  const stripExample = (name) => String(name || "").replace(/^【範例】/, "");
+  const firstText = (a) => a.steps.find((s) => s.text)?.text || "";
+  const smallIcon = (n) => icon(n).replace("<svg", '<svg style="width:14px;height:14px;vertical-align:-2px;flex:none"');
+
+  function previewModal(a) {
+    modal({
+      title: stripExample(a.name),
+      size: "sm",
+      body: `<p class="small muted" style="margin-bottom:12px">觸發條件：${triggerSummary(a)}</p>${phoneMock({ sys: ["any_ad", "ad", "ref"].includes(a.trigger_type) ? "透過廣告開啟對話" : null, userText: a.trigger_type === "keyword" ? a.trigger_value.split(/[,，]/)[0].trim() : null, bubbles: stepsToBubbles(a.steps) })}`,
+      foot: `<button class="btn" data-close>關閉</button><a class="btn btn-primary" href="#automations/edit/${a.id}">使用這個範例</a>`,
+    });
+  }
+
   PAGES.automations = async (el, args) => {
     if (args[0] === "new" && !args[1]) return renderTemplatePicker(el);
     if (args[0] === "new") return renderEditor(el, { template: args[1] });
@@ -547,13 +579,16 @@
 
     const [list, o] = await Promise.all([api("/automations"), api("/overview")]);
     state.overview = o;
+    const mine = list.filter((a) => !a.is_example);
+    const examples = list.filter((a) => a.is_example).sort((x, y) => x.id - y.id);
     el.innerHTML = `<div class="page">
-      ${pageHead("自動回覆", "客人點廣告或傳訊息時，自動送出的內容。", list.length ? `<button class="btn" id="open-test">${icon("play")}測試</button><a class="btn btn-primary" href="#automations/new">${icon("plus")}新增自動回覆</a>` : "")}
+      ${pageHead("自動回覆", "客人點廣告或傳訊息時，自動送出的內容。", `${mine.length ? `<button class="btn" id="open-test">${icon("play")}測試</button>` : ""}<a class="btn btn-primary" href="#automations/new">${icon("plus")}新增自動回覆</a>`)}
       ${subBanner()}
       ${o.channels.length === 0 ? `<div class="banner info">${icon("info")}<div class="grow">還沒連接粉絲專頁，自動回覆要連接後才會生效。</div><a class="btn btn-sm" href="#connections">連接帳號</a></div>` : ""}
-      ${list.length
-        ? `<div class="card"><div class="table-wrap"><table class="table"><thead><tr><th>名稱</th><th>觸發條件</th><th>平台</th><th class="nowrap">已觸發</th><th>啟用</th><th></th></tr></thead><tbody>
-          ${list
+      <div class="stack">
+      ${mine.length
+        ? `<div class="card"><div class="card-head"><div><h3>我的自動回覆</h3><p>開關打開的才會自動送出。</p></div></div><div class="table-wrap"><table class="table"><thead><tr><th>名稱</th><th>觸發條件</th><th>平台</th><th class="nowrap">已觸發</th><th>啟用</th><th></th></tr></thead><tbody>
+          ${mine
             .map(
               (a) => `<tr>
               <td class="primary-cell"><a href="#automations/edit/${a.id}" style="color:inherit">${esc(a.name)}</a></td>
@@ -565,7 +600,28 @@
             </tr>`,
             )
             .join("")}</tbody></table></div></div>`
-        : `<div class="card">${empty("zap", "建立第一個自動回覆", "從範本開始最快。大部分人選「廣告點擊 → 導向網址」，只要填一句話和一個網址。", `<a class="btn btn-primary" href="#automations/new/ad">${icon("plus")}廣告點擊 → 導向網址</a><a class="btn" href="#automations/new">看其他範本</a>`)}</div>`}
+        : `<div class="card"><div class="card-body">
+            <div class="row" style="gap:16px;align-items:flex-start;flex-wrap:nowrap">
+              <div class="empty-ic">${icon("zap")}</div>
+              <div style="flex:1"><div class="section-title">建立你的第一個自動回覆</div>
+                <p class="muted" style="margin-top:4px">大約 2 分鐘。跟著這三步就能完成：</p>
+                <ol class="mini-steps"><li><b>選範本</b>大多數人選「廣告點擊 → 導向網址」</li><li><b>寫訊息、放網址</b>可以一鍵套用範例文案</li><li><b>試跑後儲存</b>確認沒問題就會開始自動回覆</li></ol>
+                <div class="row" style="margin-top:14px"><a class="btn btn-primary" href="#automations/new/ad">${icon("plus")}廣告點擊 → 導向網址</a><a class="btn" href="#automations/new">看所有範本</a></div>
+              </div></div></div></div>`}
+      ${examples.length
+        ? `<div class="card"><div class="card-head"><div><h3>${icon("book").replace("<svg", '<svg style="width:16px;height:16px;vertical-align:-3px;margin-right:6px;color:var(--brand)"')}範例</h3><p>預先寫好的範例，<b>不會自動回覆</b>。打開參考或修改成你的內容，儲存後就會啟用。</p></div></div>
+            ${examples
+              .map(
+                (a) => `<div class="ex-row">
+                  <div class="ex-main"><div class="row" style="gap:8px"><b>${esc(stripExample(a.name))}</b><span class="badge">範例</span></div>
+                    <div class="small muted">${triggerSummary(a)}</div>
+                    <div class="ex-snippet">${esc(demoName(firstText(a)).split("\n")[0])}</div></div>
+                  <div class="row" style="gap:4px;flex-wrap:nowrap"><button class="btn btn-ghost btn-sm" data-preview="${a.id}">預覽</button><a class="btn btn-sm" href="#automations/edit/${a.id}">使用這個範例</a><button class="btn btn-ghost btn-sm icon-btn btn-danger" data-del="${a.id}" aria-label="刪除範例">${icon("trash")}</button></div>
+                </div>`,
+              )
+              .join("")}</div>`
+        : ""}
+      </div>
     </div>`;
     $("#open-test") && ($("#open-test").onclick = () => openTestModal());
     $$("[data-toggle]", el).forEach((inp) => {
@@ -579,11 +635,12 @@
         }
       };
     });
+    $$("[data-preview]", el).forEach((b) => (b.onclick = () => previewModal(list.find((a) => a.id === Number(b.dataset.preview)))));
     $$("[data-test]", el).forEach((b) => (b.onclick = () => openTestModal(list.find((a) => a.id === Number(b.dataset.test)))));
     $$("[data-del]", el).forEach((b) => {
       b.onclick = async () => {
         const a = list.find((x) => x.id === Number(b.dataset.del));
-        if (!(await confirmDialog("刪除自動回覆", `確定刪除「${a.name}」？這個動作無法復原。`, "刪除", true))) return;
+        if (!(await confirmDialog(a.is_example ? "刪除範例" : "刪除自動回覆", `確定刪除「${stripExample(a.name)}」？這個動作無法復原。`, "刪除", true))) return;
         await api(`/automations/${a.id}`, { method: "DELETE" });
         toast("已刪除");
         PAGES.automations(el, []);
@@ -593,35 +650,57 @@
 
   const TEMPLATES = {
     ad: {
-      icon: "click", color: "#fff3ec", fg: "#e95b17", title: "廣告點擊 → 導向網址", desc: "有人從廣告點進來，立刻回覆並附上前往網址的按鈕。", tag: "最常用",
-      data: { name: "廣告點擊自動回覆", trigger_type: "any_ad", message: "嗨 {{first_name}} 👋 謝謝你對我們的廣告有興趣！\n點下方按鈕看完整介紹與優惠。", buttons: [{ title: "立即查看", url: "" }], tag: "廣告名單" },
+      icon: "click", color: "#fff3ec", fg: "#e95b17", title: "廣告點擊 → 導向網址", desc: "有人從廣告點進來，立刻回覆並附上前往網址的按鈕。", tag: "最常用", when: "你在跑 Click to Messenger / Instagram 廣告",
+      data: { name: "廣告點擊自動回覆", trigger_type: "any_ad", message: USE_CASES[0].msg, buttons: [{ title: USE_CASES[0].btn, url: "" }], tag: "廣告名單" },
     },
     keyword: {
-      icon: "hash", color: "#eaf4fb", fg: "#1781c4", title: "關鍵字自動回覆", desc: "客人問到價格、地址等常見問題時自動回答。",
-      data: { name: "詢問價格", trigger_type: "keyword", trigger_value: "價格, 多少錢, 費用", message: "{{first_name}} 你好！價格與方案都整理在這裡 👇", buttons: [{ title: "查看價格", url: "" }], tag: "" },
+      icon: "hash", color: "#eaf4fb", fg: "#1781c4", title: "關鍵字自動回覆", desc: "客人問到價格、地址等常見問題時自動回答。", when: "常常被問一樣的問題",
+      data: { name: "詢問價格", trigger_type: "keyword", trigger_value: "價格, 多少錢, 費用", message: "{{first_name}} 你好！所有方案與價格都整理在這裡 👇", buttons: [{ title: "查看價格", url: "" }], tag: "" },
     },
     welcome: {
-      icon: "smile", color: "#e9f7f7", fg: "#2f9a9e", title: "歡迎訊息", desc: "第一次開啟對話的新朋友會收到這則訊息。",
+      icon: "smile", color: "#e9f7f7", fg: "#2f9a9e", title: "歡迎訊息", desc: "第一次開啟對話的新朋友會收到這則訊息。", when: "想讓新朋友第一時間知道你是誰",
       data: { name: "歡迎訊息", trigger_type: "get_started", message: "歡迎 {{first_name}}！我們是 {{brand}}，有任何問題都可以直接留言 😊", buttons: [], tag: "" },
     },
-    blank: { icon: "sparkles", color: "#f3f3f5", fg: "#4a4a55", title: "從空白開始", desc: "多則訊息、快速回覆、延遲、分支流程等進階設定。", data: null },
+    blank: { icon: "sparkles", color: "#f3f3f5", fg: "#4a4a55", title: "從空白開始", desc: "多則訊息、快速回覆選單、延遲與分支流程。", when: "需要問答選單或多則訊息", data: null },
   };
 
-  function renderTemplatePicker(el) {
+  async function renderTemplatePicker(el) {
+    const list = await api("/automations").catch(() => []);
+    const examples = list.filter((a) => a.is_example).sort((x, y) => x.id - y.id);
     el.innerHTML = `<div class="page">
       ${backLink("#automations", "自動回覆")}
-      ${pageHead("選擇範本", "之後都可以再修改。")}
-      <div class="grid-2">
-        ${Object.entries(TEMPLATES)
-          .map(
-            ([k, t]) => `<a class="tpl" href="#automations/new/${k}">
-              ${t.tag ? `<span class="badge brand tag">${t.tag}</span>` : ""}
-              <div class="ic" style="background:${t.color};color:${t.fg}">${icon(t.icon)}</div>
-              <div class="t">${t.title}</div><div class="d">${t.desc}</div>
-            </a>`,
-          )
-          .join("")}
+      ${pageHead("選一個起點", "選好之後都可以再修改，不用擔心選錯。")}
+      <div class="stack">
+        <div class="grid-2">
+          ${Object.entries(TEMPLATES)
+            .map(
+              ([k, t]) => `<a class="tpl" href="#automations/new/${k}">
+                ${t.tag ? `<span class="badge brand tag">${t.tag}</span>` : ""}
+                <div class="ic" style="background:${t.color};color:${t.fg}">${icon(t.icon)}</div>
+                <div class="t">${t.title}</div><div class="d">${t.desc}</div>
+                <div class="tpl-when">${smallIcon("info")}<span>適合：${t.when}</span></div>
+              </a>`,
+            )
+            .join("")}
+        </div>
+        ${examples.length
+          ? `<div><div class="section-title" style="margin:8px 0 4px">或從範例開始</div><p class="section-desc" style="margin-bottom:12px">已經寫好內容的範例，打開改成你的網址就能用。</p>
+            <div class="grid-2">${examples
+              .map(
+                (a) => `<div class="tpl ex-card" data-preview="${a.id}" role="button" tabindex="0">
+                  <div class="row between"><b>${esc(stripExample(a.name))}</b><span class="badge">範例</span></div>
+                  <div class="small muted">${triggerSummary(a)}</div>
+                  <div class="ex-snippet">${esc(demoName(firstText(a)))}</div>
+                </div>`,
+              )
+              .join("")}</div></div>`
+          : ""}
       </div></div>`;
+    $$("[data-preview]", el).forEach((c) => {
+      const open = () => previewModal(list.find((a) => a.id === Number(c.dataset.preview)));
+      c.onclick = open;
+      c.onkeydown = (e) => (e.key === "Enter" || e.key === " ") && open();
+    });
   }
 
   /* ---- simple <-> automation mapping ---- */
@@ -632,7 +711,7 @@
     else steps.push({ type: "text", text: f.message });
     if (f.tag.trim()) steps.push({ type: "tag", tag: f.tag.trim() });
     return {
-      name: f.name.trim() || TRIGGERS[f.trigger_type].t,
+      name: stripExample(f.name).trim() || TRIGGERS[f.trigger_type].t,
       enabled: f.enabled,
       priority: f.priority,
       platform: f.platform,
@@ -678,17 +757,29 @@
     return renderAdvancedEditor(el, adv);
   }
 
-  function renderSimpleEditor(el, f, original) {
+  async function renderSimpleEditor(el, f, original) {
     const isNew = !f.id;
+    const isExample = !!original?.is_example;
     if (!f.buttons) f.buttons = [];
+    const o = state.overview || (await api("/overview").catch(() => ({ channels: [] })));
+    const coachHidden = !!store.get(ukey("coach_editor"));
     el.innerHTML = `<div class="page">
       ${backLink("#automations", "自動回覆")}
-      ${pageHead(isNew ? "新增自動回覆" : "編輯自動回覆", isNew ? "填好下面兩個區塊就能使用，右邊會即時預覽客人看到的畫面。" : "")}
+      ${pageHead(isExample ? `範例：${stripExample(f.name)}` : isNew ? "新增自動回覆" : "編輯自動回覆", isNew || isExample ? "右邊會即時顯示客人在手機上看到的畫面。" : "")}
+      ${isExample ? `<div class="banner brand">${icon("book")}<div class="grow"><b>這是範例，目前不會自動回覆。</b> 把訊息和網址改成你的內容，按「使用並啟用」就會開始運作。</div></div>` : ""}
+      ${!coachHidden && (isNew || isExample) ? `<div class="coach" id="coach">
+          <div class="coach-steps">
+            <div><span class="cn">1</span><b>選擇什麼時候回覆</b><span>例如有人點了你的廣告</span></div>
+            <div><span class="cn">2</span><b>寫訊息、放網址</b><span>可以直接套用範例文案</span></div>
+            <div><span class="cn">3</span><b>檢查後儲存</b><span>下方清單全部打勾就能上線</span></div>
+          </div>
+          <button class="btn btn-ghost btn-sm icon-btn" id="coach-x" aria-label="不再顯示">${icon("x")}</button>
+        </div>` : ""}
       <div class="editor">
         <div>
           <div class="card">
             <div class="form-section">
-              <div class="sec-head"><div class="sec-num">1</div><div><div class="section-title">什麼時候回覆？</div><div class="section-desc">選擇觸發這則回覆的情況。</div></div></div>
+              <div class="sec-head"><div class="sec-num">1</div><div><div class="section-title">什麼時候回覆？</div><div class="section-desc">選擇觸發這則回覆的情況，下方會說明實際會怎麼運作。</div></div></div>
               <div class="choice-grid" id="trig-choices">
                 ${["any_ad", "ad", "ref", "keyword", "get_started", "default"]
                   .map(
@@ -705,9 +796,13 @@
             <div class="form-section">
               <div class="sec-head"><div class="sec-num">2</div><div><div class="section-title">回覆什麼？</div><div class="section-desc">一則訊息，加上帶客人前往網址的按鈕。</div></div></div>
               <div class="stack">
+                <div class="preset-box">
+                  <div class="small" style="font-weight:500;margin-bottom:8px">${smallIcon("sparkles")} 不知道怎麼寫？套用範例文案</div>
+                  <div class="preset-chips">${USE_CASES.map((u) => `<button type="button" class="preset" data-case="${u.k}">${u.t}</button>`).join("")}</div>
+                </div>
                 <label class="field"><span class="label">訊息內容</span>
                   <textarea class="input" id="s-message" maxlength="640" placeholder="嗨 {{first_name}}，謝謝你的詢問！">${esc(f.message)}</textarea>
-                  <span class="row"><span class="small muted">插入：</span><span class="var-chips"><button type="button" class="var-chip" data-var="{{first_name}}">客人名字</button><button type="button" class="var-chip" data-var="{{full_name}}">客人全名</button></span></span>
+                  <span class="row between"><span class="row"><span class="small muted">插入：</span><span class="var-chips"><button type="button" class="var-chip" data-var="{{first_name}}">客人名字</button><button type="button" class="var-chip" data-var="{{full_name}}">客人全名</button></span></span><span class="small subtle" id="msg-count">${f.message.length}/640</span></span>
                   <span class="error-text" id="e-message"></span>
                 </label>
                 <div id="btn-list" class="stack-sm"></div>
@@ -715,11 +810,15 @@
               </div>
             </div>
             <div class="form-section">
-              <details class="adv" ${original ? "" : ""}>
+              <div class="sec-head"><div class="sec-num">3</div><div><div class="section-title">上線前檢查</div><div class="section-desc">全部打勾就可以儲存上線。</div></div></div>
+              <ul class="checks" id="checks"></ul>
+            </div>
+            <div class="form-section">
+              <details class="adv">
                 <summary>${icon("right")}更多設定（選填）</summary>
                 <div class="stack" style="margin-top:16px">
                   <div class="grid-2">
-                    <label class="field"><span class="label">名稱</span><input class="input" id="s-name" value="${esc(f.name)}" placeholder="給自己看的名字"/></label>
+                    <label class="field"><span class="label">名稱</span><input class="input" id="s-name" value="${esc(stripExample(f.name))}" placeholder="給自己看的名字"/></label>
                     <label class="field"><span class="label">平台</span><select class="input" id="s-platform">
                       <option value="any" ${f.platform === "any" ? "selected" : ""}>Messenger 與 Instagram</option>
                       <option value="messenger" ${f.platform === "messenger" ? "selected" : ""}>只有 Messenger</option>
@@ -727,7 +826,7 @@
                     </select></label>
                   </div>
                   <div class="grid-2">
-                    <label class="field"><span class="label">幫客人加上標籤</span><input class="input" id="s-tag" value="${esc(f.tag)}" placeholder="例如：春季活動"/><span class="help">方便在聯絡人頁面篩選。</span></label>
+                    <label class="field"><span class="label">幫客人加上標籤</span><input class="input" id="s-tag" value="${esc(f.tag)}" placeholder="例如：春季活動"/><span class="help">方便在聯絡人頁面辨識客人從哪來。</span></label>
                     <label class="field"><span class="label">優先順序</span><input class="input" type="number" id="s-priority" value="${f.priority}"/><span class="help">同時符合多個規則時，數字大的先用。</span></label>
                   </div>
                   <div><a class="small" href="#automations/${original ? `edit/${original.id}/advanced` : "new/blank"}" id="to-advanced">切換到進階編輯器（多則訊息、快速回覆、延遲）→</a></div>
@@ -737,22 +836,28 @@
           </div>
           <div class="sticky-actions">
             <a class="btn" href="#automations">取消</a>
-            ${original ? `<button class="btn" id="s-test">${icon("play")}測試</button>` : ""}
-            <button class="btn btn-primary" id="s-save" data-busy="儲存中">${icon("check")}${isNew ? "儲存並啟用" : "儲存變更"}</button>
+            <button class="btn" id="s-test">${icon("play")}試跑看看</button>
+            <button class="btn btn-primary" id="s-save" data-busy="儲存中">${icon("check")}${isExample ? "使用並啟用" : isNew ? "儲存並啟用" : "儲存變更"}</button>
           </div>
         </div>
-        <div class="preview-col"><div class="small muted" style="margin-bottom:8px;font-weight:500">客人會看到</div><div id="preview"></div></div>
+        <div class="preview-col">
+          <div class="small muted" style="margin-bottom:8px;font-weight:500">客人會看到</div>
+          <div id="preview"></div>
+          <div class="tips">
+            <b>${smallIcon("sparkles")} 寫出好回覆的 3 個訣竅</b>
+            <ol><li>用客人的名字開頭，感覺更親切</li><li>一兩句話說清楚「點了有什麼好處」</li><li>按鈕用動詞開頭，例如「立即選購」</li></ol>
+          </div>
+        </div>
       </div></div>`;
 
     const renderTrigValue = () => {
       const T = TRIGGERS[f.trigger_type];
-      $("#trig-value-wrap").innerHTML = T.needs
-        ? `<label class="field"><span class="label">${T.needs}</span><input class="input" id="s-tv" value="${esc(f.trigger_value)}" placeholder="${esc(T.ph)}"/><span class="help">${T.help}</span><span class="error-text" id="e-tv"></span></label>`
-        : f.trigger_type === "any_ad"
-          ? `<p class="small muted">${icon("info").replace("<svg", '<svg style="width:14px;height:14px;vertical-align:-2px"')} 如果同時有「指定廣告」的規則，會優先使用指定的那一個。</p>`
-          : "";
+      const ex = TRIGGER_EXAMPLES[f.trigger_type];
+      $("#trig-value-wrap").innerHTML = `
+        ${T.needs ? `<label class="field" style="margin-bottom:12px"><span class="label">${T.needs}</span><input class="input" id="s-tv" value="${esc(f.trigger_value)}" placeholder="${esc(T.ph)}"/><span class="help">${T.help}</span><span class="error-text" id="e-tv"></span></label>` : ""}
+        ${ex ? `<div class="scenario"><div class="sc-label">${smallIcon("info")} 實際情境</div><p>${esc(ex.scene)}</p>${ex.tip ? `<p class="sc-tip">${esc(ex.tip)}</p>` : ""}</div>` : ""}`;
       const tv = $("#s-tv");
-      if (tv) tv.oninput = () => { f.trigger_value = tv.value; preview(); };
+      if (tv) tv.oninput = () => { f.trigger_value = tv.value; tv.classList.remove("invalid"); $("#e-tv").textContent = ""; refresh(); };
     };
     const renderButtons = () => {
       $("#btn-list").innerHTML = f.buttons
@@ -760,16 +865,32 @@
           (b, i) => `<div class="card" style="box-shadow:none;background:var(--surface-2)"><div class="card-body" style="padding:14px 16px">
             <div class="row between" style="margin-bottom:10px"><b class="small">按鈕 ${i + 1}</b><button type="button" class="btn btn-ghost btn-sm icon-btn" data-rm="${i}" aria-label="移除按鈕">${icon("x")}</button></div>
             <div class="grid-2">
-              <label class="field"><span class="label">按鈕文字</span><div class="input-group"><input class="input" data-bt="${i}" maxlength="20" value="${esc(b.title)}" placeholder="立即查看"/><span class="counter" data-cnt="${i}">${b.title.length}/20</span></div></label>
-              <label class="field"><span class="label">前往網址</span><input class="input" data-bu="${i}" type="url" inputmode="url" value="${esc(b.url)}" placeholder="https://your-site.com/landing"/><span class="error-text" data-eu="${i}"></span></label>
+              <div class="field"><label class="label" for="bt-${i}">按鈕文字</label><div class="input-group"><input class="input" id="bt-${i}" data-bt="${i}" maxlength="20" value="${esc(b.title)}" placeholder="立即查看"/><span class="counter" data-cnt="${i}">${b.title.length}/20</span></div>
+                <div class="idea-chips">${BUTTON_IDEAS.map((t) => `<button type="button" class="idea" data-idea="${i}">${t}</button>`).join("")}</div></div>
+              <div class="field"><label class="label" for="bu-${i}">前往網址</label><input class="input" id="bu-${i}" data-bu="${i}" type="url" inputmode="url" value="${esc(b.url)}" placeholder="https://your-site.com/landing"/>
+                <span class="error-text" data-eu="${i}"></span>
+                <span class="help">放商品頁或活動頁效果最好。<a href="#" data-utm="${i}">加上追蹤參數</a>，就能在 GA 看到從 Messenger 來的流量。</span></div>
             </div></div></div>`,
         )
         .join("");
       $("#add-btn").classList.toggle("hidden", f.buttons.length >= 3);
-      $("#btn-hint").textContent = f.buttons.length ? "" : "沒有按鈕就只會送出文字。";
-      $$("[data-bt]").forEach((inp) => (inp.oninput = () => { f.buttons[inp.dataset.bt].title = inp.value; $(`[data-cnt="${inp.dataset.bt}"]`).textContent = `${inp.value.length}/20`; preview(); }));
-      $$("[data-bu]").forEach((inp) => (inp.oninput = () => { f.buttons[inp.dataset.bu].url = inp.value; inp.classList.remove("invalid"); $(`[data-eu="${inp.dataset.bu}"]`).textContent = ""; }));
-      $$("[data-rm]").forEach((b) => (b.onclick = () => { f.buttons.splice(Number(b.dataset.rm), 1); renderButtons(); preview(); }));
+      $("#btn-hint").textContent = f.buttons.length ? "最多 3 個按鈕。" : "沒有按鈕就只會送出文字。";
+      $$("[data-bt]").forEach((inp) => (inp.oninput = () => { f.buttons[inp.dataset.bt].title = inp.value; inp.classList.remove("invalid"); $(`[data-cnt="${inp.dataset.bt}"]`).textContent = `${inp.value.length}/20`; refresh(); }));
+      $$("[data-bu]").forEach((inp) => (inp.oninput = () => { f.buttons[inp.dataset.bu].url = inp.value; inp.classList.remove("invalid"); $(`[data-eu="${inp.dataset.bu}"]`).textContent = ""; refresh(); }));
+      $$("[data-rm]").forEach((b) => (b.onclick = () => { f.buttons.splice(Number(b.dataset.rm), 1); renderButtons(); refresh(); }));
+      $$("[data-idea]").forEach((b) => (b.onclick = () => { const i = Number(b.dataset.idea); f.buttons[i].title = b.textContent; const inp = $(`[data-bt="${i}"]`); inp.value = b.textContent; inp.oninput(); }));
+      $$("[data-utm]").forEach((a) => (a.onclick = (e) => {
+        e.preventDefault();
+        const i = Number(a.dataset.utm);
+        const inp = $(`[data-bu="${i}"]`);
+        const u = inp.value.trim();
+        if (!isUrl(u)) return toast("請先填好網址，再加上追蹤參數", true);
+        if (u.includes("utm_source=")) return toast("這個網址已經有追蹤參數了");
+        const [base, hash = ""] = u.split("#");
+        inp.value = `${base}${base.includes("?") ? "&" : "?"}${UTM}${hash ? `#${hash}` : ""}`;
+        inp.oninput();
+        toast("已加上追蹤參數");
+      }));
     };
     const preview = () => {
       const T = f.trigger_type;
@@ -777,17 +898,38 @@
       const userText = T === "keyword" ? (f.trigger_value.split(/[,，]/)[0] || "").trim() || "關鍵字" : T === "default" ? "你好" : null;
       $("#preview").innerHTML = phoneMock({ sys, userText, bubbles: [{ text: demoName(f.message), buttons: f.buttons.map((b) => b.title) }] });
     };
+    const checkItems = () => {
+      const T = TRIGGERS[f.trigger_type];
+      const filled = f.buttons.filter((b) => b.title.trim() || b.url.trim());
+      const badUrl = filled.some((b) => !isUrl(b.url) || !b.title.trim());
+      const placeholder = filled.some((b) => /example\.com/i.test(b.url));
+      return [
+        { s: !T.needs || f.trigger_value.trim() ? "ok" : "todo", t: T.needs ? `填寫「${T.needs}」` : `觸發條件：${T.t}` },
+        { s: f.message.trim() ? "ok" : "todo", t: "寫好訊息內容" },
+        filled.length === 0
+          ? { s: "info", t: "沒有按鈕，客人只會看到文字（想導流量請新增按鈕）" }
+          : { s: badUrl ? "todo" : placeholder ? "warn" : "ok", t: placeholder ? "把範例網址 example.com 換成你自己的網址" : "按鈕都有文字和完整網址" },
+        o.channels?.length
+          ? { s: "ok", t: `已連接 ${o.channels.length} 個帳號` }
+          : { s: "warn", t: '還沒連接粉絲專頁，儲存後要<a href="#connections">連接帳號</a>才會生效' },
+      ];
+    };
+    const ICON_FOR = { ok: "check", todo: "x", warn: "alert", info: "info" };
+    const renderChecks = () => {
+      $("#checks").innerHTML = checkItems().map((c) => `<li class="chk ${c.s}"><span class="ci">${icon(ICON_FOR[c.s])}</span><span>${c.t}</span></li>`).join("");
+    };
+    const refresh = () => { preview(); renderChecks(); };
 
     $$("#trig-choices input").forEach((r) => {
       r.onchange = () => {
         f.trigger_type = r.value;
         $$("#trig-choices .choice").forEach((c) => c.classList.toggle("selected", c.contains(r)));
         renderTrigValue();
-        preview();
+        refresh();
       };
     });
     const msg = $("#s-message");
-    msg.oninput = () => { f.message = msg.value; $("#e-message").textContent = ""; msg.classList.remove("invalid"); preview(); };
+    msg.oninput = () => { f.message = msg.value; $("#msg-count").textContent = `${msg.value.length}/640`; $("#e-message").textContent = ""; msg.classList.remove("invalid"); refresh(); };
     $$("[data-var]").forEach((c) => {
       c.onclick = () => {
         const start = msg.selectionStart ?? msg.value.length;
@@ -797,39 +939,67 @@
         msg.oninput();
       };
     });
-    $("#add-btn").onclick = () => { f.buttons.push({ title: "", url: "" }); renderButtons(); preview(); $(`[data-bt="${f.buttons.length - 1}"]`)?.focus(); };
+    $$("[data-case]").forEach((b) => {
+      b.onclick = () => {
+        const u = USE_CASES.find((x) => x.k === b.dataset.case);
+        msg.value = u.msg;
+        msg.oninput();
+        if (!f.buttons.length) f.buttons.push({ title: u.btn, url: "" });
+        else f.buttons[0].title = u.btn;
+        renderButtons();
+        refresh();
+        $$("[data-case]").forEach((x) => x.classList.toggle("on", x === b));
+        toast(`已套用「${u.t}」文案，記得填入你的網址`);
+        if (!f.buttons[0].url) setTimeout(() => $('[data-bu="0"]')?.focus(), 50);
+      };
+    });
+    $("#add-btn").onclick = () => { f.buttons.push({ title: "", url: "" }); renderButtons(); refresh(); $(`[data-bt="${f.buttons.length - 1}"]`)?.focus(); };
     $("#s-name").oninput = (e) => (f.name = e.target.value);
     $("#s-platform").onchange = (e) => (f.platform = e.target.value);
     $("#s-tag").oninput = (e) => (f.tag = e.target.value);
     $("#s-priority").oninput = (e) => (f.priority = Number(e.target.value) || 0);
+    $("#coach-x") && ($("#coach-x").onclick = () => { store.set(ukey("coach_editor"), true); $("#coach").remove(); });
     if (!original) {
       $("#to-advanced").onclick = (e) => {
         e.preventDefault();
         renderAdvancedEditor(el, { ...simpleToAutomation(f), id: undefined });
       };
     }
-    $("#s-test") && ($("#s-test").onclick = () => openTestModal(original));
+    // 試跑：直接用目前填的內容預覽（不必先儲存）
+    $("#s-test").onclick = () => {
+      const a = { ...simpleToAutomation(f), name: stripExample(f.name) || "這則自動回覆" };
+      modal({
+        title: "試跑看看",
+        size: "sm",
+        body: `<p class="small muted" style="margin-bottom:12px">這是客人${f.trigger_type === "keyword" ? "傳訊息" : ["any_ad", "ad", "ref"].includes(f.trigger_type) ? "點了廣告" : "開啟對話"}後會看到的畫面。按鈕在真實對話中會帶客人到你的網址。</p>
+          ${phoneMock({ sys: ["any_ad", "ad", "ref"].includes(a.trigger_type) ? "透過廣告開啟對話" : null, userText: a.trigger_type === "keyword" ? (a.trigger_value.split(/[,，]/)[0] || "").trim() : null, bubbles: stepsToBubbles(a.steps) })}
+          <div style="margin-top:12px">${checkItems().filter((c) => c.s === "todo").length ? `<div class="result-err">${icon("alert")}<span>還有項目沒完成，請看「上線前檢查」。</span></div>` : `<div class="result-ok">${icon("check")}看起來沒問題，可以儲存上線了</div>`}</div>`,
+        foot: `<button class="btn" data-close>繼續編輯</button>`,
+      });
+      store.set(ukey("tested"), true);
+    };
 
     const validate = () => {
       let ok = true;
       if (!f.message.trim()) { $("#e-message").textContent = "請輸入訊息內容"; msg.classList.add("invalid"); ok = false; }
-      if (TRIGGERS[f.trigger_type].needs && !f.trigger_value.trim()) { $("#e-tv").textContent = `請填寫${TRIGGERS[f.trigger_type].needs}`; $("#s-tv").classList.add("invalid"); ok = false; }
+      if (TRIGGERS[f.trigger_type].needs && !f.trigger_value.trim()) { $("#e-tv").textContent = `請填寫「${TRIGGERS[f.trigger_type].needs}」`; $("#s-tv").classList.add("invalid"); ok = false; }
       f.buttons.forEach((b, i) => {
         if (!b.title.trim() && !b.url.trim()) return;
         if (!b.title.trim()) { $(`[data-bt="${i}"]`).classList.add("invalid"); ok = false; }
         if (!isUrl(b.url)) { $(`[data-eu="${i}"]`).textContent = "請輸入完整網址，例如 https://your-site.com"; $(`[data-bu="${i}"]`).classList.add("invalid"); ok = false; }
+        else if (/example\.com/i.test(b.url)) { $(`[data-eu="${i}"]`).textContent = "這是範例網址，請換成你自己的網址"; $(`[data-bu="${i}"]`).classList.add("invalid"); ok = false; }
       });
       return ok;
     };
     $("#s-save").onclick = (e) =>
       busy(e.currentTarget, async () => {
-        if (!validate()) return toast("有欄位需要修正", true);
+        if (!validate()) return toast("有欄位需要修正，請看標示紅色的地方", true);
         const body = simpleToAutomation(f);
-        body.enabled = f.id ? !!f.enabled : true;
+        body.enabled = f.id && !isExample ? !!f.enabled : true;
         try {
           if (f.id) await api(`/automations/${f.id}`, { method: "PUT", body });
           else await api("/automations", { method: "POST", body });
-          toast(f.id ? "已儲存" : "自動回覆已啟用");
+          toast(isExample || isNew ? "自動回覆已啟用 🎉" : "已儲存");
           location.hash = "#automations";
         } catch (err) {
           toast(err.message, true);
@@ -838,7 +1008,7 @@
 
     renderTrigValue();
     renderButtons();
-    preview();
+    refresh();
   }
 
   /* ---- advanced editor ---- */
@@ -849,7 +1019,8 @@
     const simpleOk = automationToSimple({ ...a, steps: a.steps || [] });
     el.innerHTML = `<div class="page">
       ${backLink("#automations", "自動回覆")}
-      ${pageHead(isNew ? "新增自動回覆（進階）" : "編輯自動回覆（進階）", "可以組合多則訊息、快速回覆、延遲與分支。", simpleOk && a.id ? `<a class="btn btn-sm" href="#automations/edit/${a.id}">切換到簡易模式</a>` : "")}
+      ${pageHead(a.is_example ? `範例：${stripExample(a.name)}` : isNew ? "新增自動回覆（進階）" : "編輯自動回覆（進階）", "可以組合多則訊息、快速回覆、延遲與分支。", simpleOk && a.id ? `<a class="btn btn-sm" href="#automations/edit/${a.id}">切換到簡易模式</a>` : "")}
+      ${a.is_example ? `<div class="banner brand">${icon("book")}<div class="grow"><b>這是範例，目前不會自動回覆。</b> 這個範例示範「快速回覆選單」：客人點選項後，會觸發對應「按鈕回傳」的自動回覆。修改後按「使用並啟用」。</div></div>` : `<div class="banner info">${icon("info")}<div class="grow">進階編輯器可以組合多個步驟。想做問答選單：加一個「快速回覆」步驟，每個選項設定一個 payload，再為每個 payload 建立觸發條件為「按鈕回傳」的自動回覆。</div></div>`}
       <div class="editor">
         <div>
           <div class="card">
@@ -871,7 +1042,7 @@
               <div id="steps"></div>
             </div>
           </div>
-          <div class="sticky-actions"><a class="btn" href="#automations">取消</a><button class="btn btn-primary" id="adv-save" data-busy="儲存中">${icon("check")}儲存</button></div>
+          <div class="sticky-actions"><a class="btn" href="#automations">取消</a><button class="btn btn-primary" id="adv-save" data-busy="儲存中">${icon("check")}${a.is_example ? "使用並啟用" : "儲存"}</button></div>
         </div>
         <div class="preview-col"><div class="small muted" style="margin-bottom:8px;font-weight:500">客人會看到</div><div id="preview"></div></div>
       </div></div>`;
@@ -944,7 +1115,7 @@
     $("#adv-save").onclick = (e) =>
       busy(e.currentTarget, async () => {
         try {
-          const body = { ...a, enabled: a.enabled !== 0 };
+          const body = { ...a, name: stripExample(a.name) || "自動回覆", enabled: a.is_example ? true : a.enabled !== 0 };
           if (a.id) await api(`/automations/${a.id}`, { method: "PUT", body });
           else await api("/automations", { method: "POST", body });
           toast("已儲存");

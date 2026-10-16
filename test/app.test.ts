@@ -6,6 +6,7 @@ import { createCaptureSender } from "../src/meta/sendApi.js";
 import { signBody } from "../src/meta/signature.js";
 import { KEYS } from "../src/settings.js";
 import { encrypt, hashInfo, toQueryString } from "../src/billing/payuni.js";
+import { EXAMPLES, seedExamplesForExistingUsers } from "../src/examples.js";
 
 const APP_SECRET = "secret123";
 const PAGE_ID = "PAGE1";
@@ -190,7 +191,11 @@ describe("廣告點擊 → 自動回覆 → 導購（資料隔離）", () => {
     });
     expect(r.status).toBe(201);
     aliceAutomation = r.body.id as number;
-    expect((await call("bob", "GET", "/automations")).body).toEqual([]);
+    const bobId = users.byEmail(db, "bob@example.com")!.id;
+    const bobList = (await call("bob", "GET", "/automations")).body as unknown as { id: number; user_id: number; is_example: number }[];
+    expect(bobList.length).toBe(EXAMPLES.length);
+    expect(bobList.every((x) => x.user_id === bobId && x.is_example === 1)).toBe(true);
+    expect(bobList.some((x) => x.id === aliceAutomation)).toBe(false);
     expect((await call("bob", "GET", `/automations/${aliceAutomation}`)).status).toBe(404);
   });
 
@@ -316,5 +321,39 @@ describe("PayUni 付費流程", () => {
     expect((await call("owner", "POST", "/billing/plans", { code: "bad", name: "x", price: -1, months: 1 })).status).toBe(400);
     const list = (await call("owner", "GET", "/billing/orders/all")).body as unknown as { email: string }[];
     expect(list.some((o) => o.email === "bob@example.com")).toBe(true);
+  });
+});
+
+describe("範例自動回覆", () => {
+  it("註冊時建立範例，全部不啟用，也不會被觸發", async () => {
+    await signup("carol", "carol@example.com");
+    const list = (await call("carol", "GET", "/automations")).body as unknown as { id: number; enabled: number; is_example: number; name: string }[];
+    expect(list).toHaveLength(EXAMPLES.length);
+    expect(list.every((a) => a.enabled === 0 && a.is_example === 1)).toBe(true);
+    expect(list.every((a) => a.name.startsWith("【範例】"))).toBe(true);
+    // 沒有啟用的規則 → 模擬不會命中任何範例
+    const sim = await call("carol", "POST", "/simulate", { platform: "messenger", ad_id: "X" });
+    expect(sim.body.matched).toBeNull();
+    // 首頁統計不把範例算成「啟用中的自動回覆」
+    expect(((await call("carol", "GET", "/overview")).body.stats as { automations: number }).automations).toBe(0);
+  });
+
+  it("修改或啟用範例後就變成使用者自己的", async () => {
+    const list = (await call("carol", "GET", "/automations")).body as unknown as { id: number; trigger_type: string }[];
+    const ad = list.find((a) => a.trigger_type === "any_ad")!;
+    const r = await call("carol", "PATCH", `/automations/${ad.id}/enabled`, { enabled: true });
+    expect(r.body).toMatchObject({ enabled: 1, is_example: 0 });
+    const sim = await call("carol", "POST", "/simulate", { platform: "messenger", ad_id: "X" });
+    expect((sim.body.matched as { id: number }).id).toBe(ad.id);
+  });
+
+  it("既有帳號只補一次範例", () => {
+    const carol = users.byEmail(db, "carol@example.com")!;
+    const before = automations.list(db, carol.id).length;
+    seedExamplesForExistingUsers(db);
+    expect(automations.list(db, carol.id).length).toBe(before);
+    db.prepare("UPDATE users SET examples_seeded = 0 WHERE id = ?").run(carol.id);
+    seedExamplesForExistingUsers(db);
+    expect(automations.list(db, carol.id).length).toBe(before + EXAMPLES.length);
   });
 });
