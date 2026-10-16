@@ -150,6 +150,24 @@ function migrate(db: DB) {
     (db.prepare(`PRAGMA table_info(${table})`).all() as Row[]).some((c) => c.name === column);
   if (!hasColumn("automations", "is_example")) db.exec("ALTER TABLE automations ADD COLUMN is_example INTEGER NOT NULL DEFAULT 0");
   if (!hasColumn("users", "examples_seeded")) db.exec("ALTER TABLE users ADD COLUMN examples_seeded INTEGER NOT NULL DEFAULT 0");
+  // 第一則訊息已放進廣告 JSON：客人從廣告進來互動時不重複送出
+  if (!hasColumn("automations", "ad_json")) db.exec("ALTER TABLE automations ADD COLUMN ad_json INTEGER NOT NULL DEFAULT 0");
+  // 連線健康狀態
+  if (!hasColumn("channels", "status")) db.exec("ALTER TABLE channels ADD COLUMN status TEXT NOT NULL DEFAULT 'ok'");
+  if (!hasColumn("channels", "last_error")) db.exec("ALTER TABLE channels ADD COLUMN last_error TEXT");
+  if (!hasColumn("channels", "checked_at")) db.exec("ALTER TABLE channels ADD COLUMN checked_at TEXT");
+  if (!hasColumn("channels", "fb_user_id")) db.exec("ALTER TABLE channels ADD COLUMN fb_user_id TEXT");
+  // 小編接手時暫停自動回覆
+  if (!hasColumn("contacts", "paused_until")) db.exec("ALTER TABLE contacts ADD COLUMN paused_until TEXT");
+  // 讀取廣告清單用的長效使用者權杖（選用）
+  if (!hasColumn("users", "fb_user_id")) db.exec("ALTER TABLE users ADD COLUMN fb_user_id TEXT");
+  if (!hasColumn("users", "fb_user_token")) db.exec("ALTER TABLE users ADD COLUMN fb_user_token TEXT");
+  db.exec(`CREATE TABLE IF NOT EXISTS deletion_requests (
+    code TEXT PRIMARY KEY,
+    fb_user_id TEXT NOT NULL,
+    detail TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
 }
 
 type Row = Record<string, unknown>;
@@ -179,6 +197,9 @@ export interface User {
   role: UserRole;
   trial_until: string | null; // ISO
   paid_until: string | null; // ISO
+  /** 連接 Facebook 的那個人（App 範圍的使用者 ID）與長效使用者權杖，用來讀取廣告清單 */
+  fb_user_id?: string | null;
+  fb_user_token?: string | null;
   created_at: string;
 }
 export const users = {
@@ -211,6 +232,12 @@ export const users = {
   },
   setRole(db: DB, id: number, role: UserRole) {
     db.prepare("UPDATE users SET role = ? WHERE id = ?").run(role, id);
+  },
+  setFbUser(db: DB, id: number, fbUserId: string | null, token: string | null) {
+    db.prepare("UPDATE users SET fb_user_id = ?, fb_user_token = ? WHERE id = ?").run(fbUserId, token, id);
+  },
+  byFbUser(db: DB, fbUserId: string): User[] {
+    return db.prepare("SELECT * FROM users WHERE fb_user_id = ?").all(fbUserId) as unknown as User[];
   },
 };
 
@@ -320,15 +347,30 @@ export const channels = {
   byExternalId(db: DB, externalId: string): Channel | undefined {
     return db.prepare("SELECT * FROM channels WHERE external_id = ?").get(externalId) as unknown as Channel | undefined;
   },
-  upsert(db: DB, c: Omit<Channel, "id" | "created_at">): Channel {
+  upsert(db: DB, c: Omit<Channel, "id" | "created_at" | "status" | "last_error" | "checked_at">): Channel {
+    // 重新連接 = 拿到新權杖，所以狀態一併恢復正常
     db.prepare(
-      `INSERT INTO channels (user_id, platform, external_id, name, access_token, instagram_login)
-       VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO channels (user_id, platform, external_id, name, access_token, instagram_login, fb_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(external_id) DO UPDATE SET
          user_id = excluded.user_id, platform = excluded.platform, name = excluded.name,
-         access_token = excluded.access_token, instagram_login = excluded.instagram_login`,
-    ).run(c.user_id, c.platform, c.external_id, c.name, c.access_token, c.instagram_login ? 1 : 0);
+         access_token = excluded.access_token, instagram_login = excluded.instagram_login,
+         fb_user_id = COALESCE(excluded.fb_user_id, channels.fb_user_id),
+         status = 'ok', last_error = NULL, checked_at = datetime('now')`,
+    ).run(c.user_id, c.platform, c.external_id, c.name, c.access_token, c.instagram_login ? 1 : 0, c.fb_user_id ?? null);
     return channels.byExternalId(db, c.external_id)!;
+  },
+  all(db: DB): Channel[] {
+    return db.prepare("SELECT * FROM channels ORDER BY id").all() as unknown as Channel[];
+  },
+  /** 記錄健康檢查結果；狀態有變化時回傳 true */
+  setStatus(db: DB, id: number, status: "ok" | "broken", error: string | null): boolean {
+    const before = channels.get(db, id);
+    db.prepare("UPDATE channels SET status = ?, last_error = ?, checked_at = datetime('now') WHERE id = ?").run(status, error, id);
+    return !!before && before.status !== status;
+  },
+  byFbUser(db: DB, fbUserId: string): Channel[] {
+    return db.prepare("SELECT * FROM channels WHERE fb_user_id = ?").all(fbUserId) as unknown as Channel[];
   },
   remove(db: DB, id: number, userId: number) {
     db.prepare("DELETE FROM channels WHERE id = ? AND user_id = ?").run(id, userId);
@@ -336,7 +378,7 @@ export const channels = {
 };
 
 /* ---------- automations ---------- */
-export type AutomationInput = Omit<Automation, "id" | "triggered_count" | "is_example" | "created_at" | "updated_at">;
+export type AutomationInput = Omit<Automation, "id" | "triggered_count" | "is_example" | "ad_json" | "created_at" | "updated_at">;
 
 export const automations = {
   list(db: DB, userId: number): Automation[] {
@@ -386,6 +428,9 @@ export const automations = {
   remove(db: DB, id: number, userId: number) {
     db.prepare("DELETE FROM automations WHERE id = ? AND user_id = ?").run(id, userId);
   },
+  setAdJson(db: DB, id: number, userId: number, on: boolean) {
+    db.prepare("UPDATE automations SET ad_json = ? WHERE id = ? AND user_id = ?").run(on ? 1 : 0, id, userId);
+  },
   bumpTriggered(db: DB, id: number) {
     db.prepare("UPDATE automations SET triggered_count = triggered_count + 1 WHERE id = ?").run(id);
   },
@@ -434,6 +479,18 @@ export const contacts = {
       `UPDATE contacts SET source_ad_id = COALESCE(source_ad_id, ?), source_ref = COALESCE(source_ref, ?),
          source_automation_id = COALESCE(source_automation_id, ?) WHERE id = ?`,
     ).run(s.ad_id, s.ref, s.automation_id, id);
+  },
+  /** 小編接手：在 until 之前不跑自動回覆；null = 恢復 */
+  setPausedUntil(db: DB, id: number, until: string | null) {
+    db.prepare("UPDATE contacts SET paused_until = ? WHERE id = ?").run(until, id);
+  },
+  removeByChannel(db: DB, channelId: number) {
+    db.prepare("DELETE FROM contacts WHERE channel_id = ?").run(channelId);
+  },
+  /** 依廣告統計帶進來的聯絡人數 */
+  countByAd(db: DB, userId: number): Record<string, number> {
+    const rows = db.prepare("SELECT source_ad_id ad, COUNT(*) n FROM contacts WHERE user_id = ? AND source_ad_id IS NOT NULL GROUP BY source_ad_id").all(userId) as Row[];
+    return Object.fromEntries(rows.map((r) => [String(r.ad), Number(r.n)]));
   },
   addTag(db: DB, id: number, tag: string) {
     const c = contacts.get(db, id);
@@ -486,6 +543,18 @@ export const events = {
   list(db: DB, userId: number | null, limit = 200): EventRow[] {
     if (userId === null) return db.prepare("SELECT * FROM events ORDER BY id DESC LIMIT ?").all(limit) as unknown as EventRow[];
     return db.prepare("SELECT * FROM events WHERE user_id = ? ORDER BY id DESC LIMIT ?").all(userId, limit) as unknown as EventRow[];
+  },
+  /** 這位聯絡人最近一次某種事件距今幾秒（沒有就是 null） */
+  secondsSince(db: DB, contactId: number, type: string): number | null {
+    const r = db
+      .prepare("SELECT (julianday('now') - julianday(created_at)) * 86400 s FROM events WHERE contact_id = ? AND type = ? ORDER BY id DESC LIMIT 1")
+      .get(contactId, type) as Row | undefined;
+    return r ? Number(r.s) : null;
+  },
+  /** 最近 N 天內某種事件的次數 */
+  countRecent(db: DB, userId: number, type: string, days: number): number {
+    const r = db.prepare("SELECT COUNT(*) n FROM events WHERE user_id = ? AND type = ? AND created_at >= datetime('now', ?)").get(userId, type, `-${days} days`) as Row;
+    return Number(r.n);
   },
   forContact(db: DB, contactId: number, limit = 100): EventRow[] {
     return db.prepare("SELECT * FROM events WHERE contact_id = ? ORDER BY id DESC LIMIT ?").all(contactId, limit) as unknown as EventRow[];
@@ -571,3 +640,13 @@ export function platformStats(db: DB) {
     channels: one("SELECT COUNT(*) n FROM channels"),
   };
 }
+
+/* ---------- Meta 資料刪除要求 ---------- */
+export const deletionRequests = {
+  create(db: DB, code: string, fbUserId: string, detail: string) {
+    db.prepare("INSERT INTO deletion_requests (code, fb_user_id, detail) VALUES (?, ?, ?)").run(code, fbUserId, detail);
+  },
+  get(db: DB, code: string): { code: string; fb_user_id: string; detail: string | null; created_at: string } | undefined {
+    return db.prepare("SELECT * FROM deletion_requests WHERE code = ?").get(code) as never;
+  },
+};

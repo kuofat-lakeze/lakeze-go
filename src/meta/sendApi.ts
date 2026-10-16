@@ -11,6 +11,30 @@ export interface Sender {
   ): Promise<{ first_name?: string; last_name?: string; profile_pic?: string } | null>;
 }
 
+/** Graph API 傳送失敗；code / subcode 是 Meta 的錯誤代碼 */
+export class SendError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public code: number | null,
+    public subcode: number | null,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * 是不是「連線本身壞掉」（權杖失效、權限被拿掉），需要客戶重新連接。
+ * 像「超過 24 小時」或「這個人目前無法接收訊息」只跟單一客人有關，不算。
+ */
+export function isConnectionError(err: unknown): boolean {
+  if (!(err instanceof SendError)) return false;
+  if (err.code === 190 || err.code === 102 || err.status === 401) return true;
+  if (err.code === 200 && err.subcode !== 2018278) return true;
+  if (err.code === 10 && err.subcode !== 2018278 && err.subcode !== 2018108) return true;
+  return false;
+}
+
 export function graphBase(channel: Channel, version: string): string {
   const host = channel.platform === "instagram" && channel.instagram_login ? "graph.instagram.com" : "graph.facebook.com";
   return `https://${host}/${version}`;
@@ -31,7 +55,18 @@ export function createGraphSender(getVersion: () => string, fetchImpl: typeof fe
       });
       if (!res.ok) {
         const body = await res.text().catch(() => "");
-        throw new Error(`Graph API ${res.status}: ${body.slice(0, 500)}`);
+        let code: number | null = null;
+        let subcode: number | null = null;
+        let msg = body.slice(0, 500);
+        try {
+          const e = (JSON.parse(body) as { error?: { code?: number; error_subcode?: number; message?: string } }).error;
+          code = e?.code ?? null;
+          subcode = e?.error_subcode ?? null;
+          if (e?.message) msg = e.message;
+        } catch {
+          /* 不是 JSON 就用原文 */
+        }
+        throw new SendError(`Graph API ${res.status}${code ? ` (#${code})` : ""}: ${msg}`, res.status, code, subcode);
       }
     },
     async getProfile(channel, psid) {

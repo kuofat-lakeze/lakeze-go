@@ -29,6 +29,9 @@
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } },
   };
   const ukey = (k) => `lg:${state.me?.user?.id ?? 0}:${k}`;
+  const sessionGet = (k) => { try { return JSON.parse(sessionStorage.getItem(k) ?? "null"); } catch { return null; } };
+  const sessionSet = (k, v) => { try { sessionStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } };
+  const sessionDel = (k) => { try { sessionStorage.removeItem(k); } catch { /* ignore */ } };
 
   const ICON_PATHS = {
     home: '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>',
@@ -81,6 +84,9 @@
     lock: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
     maximize: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>',
     workflow: '<rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/>',
+    code: '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>',
+    pause: '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
     rocket: '<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>',
   };
   const icon = (name) =>
@@ -663,7 +669,7 @@
     if (allDone) {
       el.innerHTML = `<div class="page">
         ${pageHead(greeting, "一切就緒，自動回覆正在運作。", `<a class="btn" href="#automations">${icon("zap")}管理自動回覆</a>`)}
-        ${ownerBanner}${subBanner()}
+        ${ownerBanner}${subBanner()}${healthBanner(o)}
         <div class="stack">
           <div class="grid-4">
             ${stat("今日新聯絡人", num(s.contacts_today))}
@@ -701,8 +707,10 @@
       },
       {
         title: "投放「訊息」目標的廣告",
-        desc: `到廣告管理員建立 <b>互動 → 訊息</b> 目標的廣告，訊息應用程式選 Messenger 或 Instagram。`,
-        action: `<a class="btn btn-primary btn-lg" href="https://adsmanager.facebook.com/" target="_blank" rel="noopener">${icon("external")}開啟廣告管理員</a><button class="btn btn-lg" id="task-ad">${icon("check")}我已完成</button>`,
+        desc: live && AD_TRIGGER(live.trigger_type)
+          ? `到廣告管理員建立 <b>互動 → 訊息</b> 目標的廣告。先取得廣告 JSON 貼進廣告，客人一點廣告就會直接看到你的訊息。`
+          : `到廣告管理員建立 <b>互動 → 訊息</b> 目標的廣告，訊息應用程式選 Messenger 或 Instagram。`,
+        action: `${live && AD_TRIGGER(live.trigger_type) ? `<button class="btn btn-primary btn-lg" id="task-json">${icon("code")}取得廣告 JSON</button><a class="btn btn-lg" href="https://adsmanager.facebook.com/" target="_blank" rel="noopener">${icon("external")}開啟廣告管理員</a>` : `<a class="btn btn-primary btn-lg" href="https://adsmanager.facebook.com/" target="_blank" rel="noopener">${icon("external")}開啟廣告管理員</a>`}<button class="btn btn-lg" id="task-ad">${icon("check")}我已完成</button>`,
         alt: "",
         cap: live ? `廣告上線後，客人會收到「${esc(stripExample(live.name))}」` : "",
         a: live || DEMO_AD,
@@ -711,7 +719,7 @@
 
     el.innerHTML = `<div class="page">
       ${pageHead(greeting, "跟著 3 個步驟，大約 5 分鐘就能上線。")}
-      ${ownerBanner}${subBanner()}
+      ${ownerBanner}${subBanner()}${healthBanner(o)}
       ${stepper(steps, cur)}
       <div class="wiz">
         <div class="wiz-main">
@@ -729,6 +737,7 @@
     wirePhone("home-phone", phone, play);
     play();
     $("#task-ad") && ($("#task-ad").onclick = () => { store.set(ukey("ad_done"), true); PAGES.home(el); });
+    $("#task-json") && ($("#task-json").onclick = () => openAdJson(live));
   };
   const stat = (k, v) => `<div class="card stat"><div class="k">${esc(k)}</div><div class="v">${v}</div></div>`;
   const statPlain = (k, v) => `<div class="stat"><div class="k">${esc(k)}</div><div class="v">${v}</div></div>`;
@@ -741,6 +750,95 @@
     if (sub.source === "paid" && sub.days_left <= 7)
       return `<div class="banner warning">${icon("info")}<div class="grow">方案將於 <b>${fmtDate(sub.until)}</b> 到期。</div><a class="btn btn-sm" href="#billing">續約</a></div>`;
     return "";
+  }
+
+  /** 連線失效、和專頁原本的自動回覆衝突時的提醒 */
+  function healthBanner(o) {
+    const broken = (o.channels || []).filter((c) => c.status === "broken");
+    if (broken.length)
+      return `<div class="banner danger">${icon("alert")}<div class="grow"><b>${broken.map((c) => esc(c.name)).join("、")} 的連線失效了，</b>自動回覆送不出去。重新連接 Facebook 就會恢復。</div><a class="btn btn-sm btn-primary" href="/auth/facebook">${icon("facebook")}重新連接</a></div>`;
+    if (o.conflicts_7d > 0 && !store.get(ukey("conflict_ack")))
+      return `<div class="banner warning">${icon("info")}<div class="grow"><b>客人收到了兩則回覆。</b> 最近 7 天有 ${o.conflicts_7d} 次，專頁原本的自動回覆也同時回覆了客人。到 Meta 商業套件關掉「即時回覆」就不會重複。</div><a class="btn btn-sm" href="${BIZ_AUTOMATIONS}" target="_blank" rel="noopener">${icon("external")}前往關閉</a><button class="btn btn-sm btn-ghost icon-btn" data-ack-conflict aria-label="知道了">${icon("x")}</button></div>`;
+    return "";
+  }
+  const BIZ_AUTOMATIONS = "https://business.facebook.com/latest/inbox/automations";
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-ack-conflict]");
+    if (!b) return;
+    store.set(ukey("conflict_ack"), true);
+    b.closest(".banner")?.remove();
+  });
+
+  /** 讓客人一點廣告就看到這則訊息：產生 Messenger 廣告的 JSON */
+  async function openAdJson(a, onChange) {
+    let r;
+    try {
+      r = await api(`/automations/${a.id}/ad-json`);
+    } catch (err) {
+      return toast(err.message, true);
+    }
+    const text = JSON.stringify(r.json, null, 2);
+    const m = modal({
+      title: "放進廣告：客人一點就看到",
+      body: `<p class="muted" style="margin-bottom:16px">把「${esc(stripExample(a.name))}」的第一則訊息直接放進 Messenger 廣告。客人點廣告打開對話，馬上就看到訊息和前往網址的按鈕，不用先傳訊息。</p>
+        <ol class="guide compact">
+          <li><div><b>複製這段 JSON</b>${copyBlock(text)}</div></li>
+          <li><div><b>貼到廣告裡</b><p class="muted small">在廣告管理員編輯廣告（目標選「互動 → 訊息 → Messenger」），到廣告層級的「訊息範本」→「建立」→ 設定方式選 <b>JSON</b>，貼上後發布。部分版面的 JSON 選項在「進階選項」裡。</p></div></li>
+          <li><div><b>打開這個開關</b><label class="row" style="gap:10px;cursor:pointer;margin-top:6px"><span class="switch"><input type="checkbox" id="aj-on" ${r.ad_json ? "checked" : ""}/><span class="slider"></span></span><span class="small">已經放進廣告了：客人從廣告進來時，<b>不要再重複送出</b>第一則訊息（標籤和後續訊息照常）</span></label></div></li>
+        </ol>
+        ${r.warnings.length ? `<div class="note warn">${r.warnings.map((w) => `<div>${icon("info")}<span>${esc(w)}</span></div>`).join("")}</div>` : ""}
+        <p class="small muted" style="margin-top:12px">之後修改這則訊息，記得重新複製 JSON 更新廣告。Instagram 廣告不支援 JSON，會照原本方式自動回覆。</p>`,
+      foot: `<a class="btn" href="https://adsmanager.facebook.com/" target="_blank" rel="noopener">${icon("external")}開啟廣告管理員</a><button class="btn btn-primary" data-close>完成</button>`,
+    });
+    $("#aj-on", m.el).onchange = async (e) => {
+      try {
+        await api(`/automations/${a.id}/ad-json`, { method: "PATCH", body: { enabled: e.target.checked } });
+        toast(e.target.checked ? "已設定：客人從廣告進來不會重複收到第一則訊息" : "已關閉");
+        onChange?.(e.target.checked);
+      } catch (err) {
+        e.target.checked = !e.target.checked;
+        toast(err.message, true);
+      }
+    };
+  }
+  const AD_TRIGGER = (t) => t === "any_ad" || t === "ad" || t === "ref";
+
+  /** 從廣告帳號挑選廣告（需要另外允許讀取廣告） */
+  async function openAdPicker(selected, onPick, returnHash) {
+    const m = modal({ title: "選擇廣告", body: `<div class="muted small" id="ap-body"><span class="spinner"></span> 讀取廣告中…</div>`, foot: `<button class="btn" data-close>取消</button><button class="btn btn-primary" id="ap-ok" disabled>使用選取的廣告</button>` });
+    let r;
+    try {
+      r = await api("/meta/ads");
+    } catch (err) {
+      $("#ap-body", m.el).innerHTML = `<div class="result-err">${icon("alert")}<span>${esc(err.message)}</span></div>`;
+      return;
+    }
+    if (!r.authorized) {
+      $("#ap-body", m.el).innerHTML = `<div class="stack-sm"><p>${r.expired ? "Facebook 授權已過期，" : ""}要先允許讀取你的廣告清單，才能直接挑選廣告（只會讀取廣告名稱、ID 和狀態）。</p>
+        <p class="small muted">按下後會開啟 Facebook，允許後自動回到這裡，你填到一半的內容會保留。</p></div>`;
+      $("#ap-ok", m.el).outerHTML = `<button class="btn btn-fb" id="ap-auth">${icon("facebook")}允許讀取廣告</button>`;
+      $("#ap-auth", m.el).onclick = () => {
+        onPick(null);
+        location.href = `/auth/facebook?ads=1&return=${encodeURIComponent(returnHash)}`;
+      };
+      return;
+    }
+    const chosen = new Set(selected);
+    const STATUS = { ACTIVE: ["投放中", "success"], PAUSED: ["已暫停", ""], CAMPAIGN_PAUSED: ["行銷活動暫停", ""], ADSET_PAUSED: ["廣告組合暫停", ""], PENDING_REVIEW: ["審查中", "info"], IN_PROCESS: ["處理中", "info"], WITH_ISSUES: ["有問題", "warning"] };
+    const draw = (q = "") => {
+      const list = r.ads.filter((a) => !q || `${a.name} ${a.campaign || ""} ${a.id}`.toLowerCase().includes(q.toLowerCase()));
+      $("#ap-list", m.el).innerHTML = list.length
+        ? list.map((a) => `<label class="ad-pick ${chosen.has(a.id) ? "on" : ""}"><input type="checkbox" value="${esc(a.id)}" ${chosen.has(a.id) ? "checked" : ""}/>
+            <span class="grow"><b>${esc(a.name)}</b><span class="small muted">${esc(a.campaign || a.account)} · ID ${esc(a.id)}</span></span>
+            ${a.contacts ? `<span class="small muted nowrap">帶來 ${num(a.contacts)} 位</span>` : ""}<span class="badge ${STATUS[a.status]?.[1] ?? ""}">${STATUS[a.status]?.[0] ?? esc(a.status)}</span></label>`).join("")
+        : `<p class="small muted">${r.ads.length ? "找不到符合的廣告" : "你的廣告帳號裡還沒有廣告。"}</p>`;
+      $$("#ap-list input", m.el).forEach((i) => (i.onchange = () => { i.checked ? chosen.add(i.value) : chosen.delete(i.value); i.closest(".ad-pick").classList.toggle("on", i.checked); $("#ap-ok", m.el).disabled = !chosen.size; }));
+    };
+    $("#ap-body", m.el).outerHTML = `<div class="stack-sm"><div class="input-icon">${icon("search")}<input class="input" id="ap-q" placeholder="搜尋廣告名稱或 ID"/></div><div class="ad-pick-list" id="ap-list"></div></div>`;
+    $("#ap-q", m.el).oninput = (e) => draw(e.target.value);
+    $("#ap-ok", m.el).disabled = !chosen.size;
+    $("#ap-ok", m.el).onclick = () => { onPick([...chosen]); m.close(); };
+    draw();
   }
 
   /* =========================================================
@@ -796,8 +894,9 @@
     run();
   }
 
-  PAGES.automations = async (el, args) => {
-    if (args[0] === "new") return renderEditor(el, { template: args[1] || "ad" });
+  PAGES.automations = async (el, args, query) => {
+    if (args[0] === "new") return renderEditor(el, { template: args[1] || "ad", restore: query?.get("ads") === "granted" });
+    if (args[0] === "edit" && args[1] && query?.get("ads") === "granted") return renderEditor(el, { id: Number(args[1]), restore: true });
     if (args[0] === "edit" && args[1]) return renderEditor(el, { id: Number(args[1]), advanced: args[2] === "advanced" });
     if (args[0] === "flow" && args[1]) return renderEditor(el, { id: Number(args[1]), advanced: true });
 
@@ -817,6 +916,7 @@
     el.innerHTML = `<div class="page">
       ${pageHead("自動回覆", "客人點廣告或傳訊息時，自動送出的內容。", mine.length ? `<button class="btn" id="open-test">${icon("play")}測試</button><a class="btn btn-primary" href="#automations/new">${icon("plus")}新增</a>` : "")}
       ${subBanner()}
+      ${healthBanner(o)}
       ${o.channels.length === 0 && mine.length ? `<div class="banner info">${icon("info")}<div class="grow">還沒連接粉絲專頁，自動回覆要連接後才會生效。</div><a class="btn btn-sm" href="#connections">連接帳號</a></div>` : ""}
       ${mine.length
         ? `<div class="stack">
@@ -824,11 +924,11 @@
           ${mine
             .map(
               (a) => `<tr>
-              <td class="primary-cell"><a href="#automations/edit/${a.id}" style="color:inherit">${esc(a.name)}</a>${a.platform !== "any" ? ` ${platformBadge(a.platform)}` : ""}</td>
+              <td class="primary-cell"><a href="#automations/edit/${a.id}" style="color:inherit">${esc(a.name)}</a>${a.platform !== "any" ? ` ${platformBadge(a.platform)}` : ""}${a.ad_json ? ' <span class="badge brand" title="第一則訊息已放進 Messenger 廣告">已放進廣告</span>' : ""}</td>
               <td>${triggerSummary(a)}</td>
               <td>${num(a.triggered_count)} 次</td>
               <td><label class="switch" title="${a.enabled ? "已啟用" : "已停用"}"><input type="checkbox" data-toggle="${a.id}" ${a.enabled ? "checked" : ""} aria-label="啟用 ${esc(a.name)}"/><span class="slider"></span></label></td>
-              <td class="actions"><a class="btn btn-ghost btn-sm" href="#automations/edit/${a.id}">${icon("edit")}編輯</a><a class="btn btn-ghost btn-sm icon-btn" href="#automations/flow/${a.id}" title="在視覺流程編輯器開啟" aria-label="視覺流程編輯器">${icon("workflow")}</a><button class="btn btn-ghost btn-sm btn-danger icon-btn" data-del="${a.id}" aria-label="刪除">${icon("trash")}</button></td>
+              <td class="actions">${AD_TRIGGER(a.trigger_type) ? `<button class="btn btn-ghost btn-sm" data-adjson="${a.id}" title="讓客人一點廣告就看到這則訊息">${icon("code")}廣告 JSON</button>` : ""}<a class="btn btn-ghost btn-sm" href="#automations/edit/${a.id}">${icon("edit")}編輯</a><a class="btn btn-ghost btn-sm icon-btn" href="#automations/flow/${a.id}" title="在視覺流程編輯器開啟" aria-label="視覺流程編輯器">${icon("workflow")}</a><button class="btn btn-ghost btn-sm btn-danger icon-btn" data-del="${a.id}" aria-label="刪除">${icon("trash")}</button></td>
             </tr>`,
             )
             .join("")}</tbody></table></div></div>
@@ -861,6 +961,13 @@
       }));
     } else $$("[data-preview]", el).forEach((b) => (b.onclick = () => previewModal(list.find((a) => a.id === Number(b.dataset.preview)))));
     $("#open-test") && ($("#open-test").onclick = () => openTestModal());
+    const reload = () => PAGES.automations(el, [], new URLSearchParams());
+    $$("[data-adjson]", el).forEach((b) => (b.onclick = () => openAdJson(list.find((a) => a.id === Number(b.dataset.adjson)), reload)));
+    const autoJson = Number(query?.get("adjson"));
+    if (autoJson && mine.some((a) => a.id === autoJson)) {
+      history.replaceState(null, "", "#automations");
+      openAdJson(mine.find((a) => a.id === autoJson), reload);
+    }
     $$("[data-toggle]", el).forEach((inp) => {
       inp.onchange = async () => {
         try {
@@ -878,7 +985,7 @@
         if (!(await confirmDialog(a.is_example ? "刪除範例" : "刪除自動回覆", `確定刪除「${stripExample(a.name)}」？這個動作無法復原。`, "刪除", true))) return;
         await api(`/automations/${a.id}`, { method: "DELETE" });
         toast("已刪除");
-        PAGES.automations(el, []);
+        reload();
       };
     });
   };
@@ -936,18 +1043,26 @@
     };
   }
 
-  async function renderEditor(el, { id, template, advanced }) {
+  async function renderEditor(el, { id, template, advanced, restore }) {
     let a = null;
     if (id) a = await api(`/automations/${id}`);
     let simple = null;
     if (a && !advanced) simple = automationToSimple(a);
     if (!a && template !== "blank") simple = fromTemplate(TEMPLATES[template] ? template : "ad");
+    // 從 Facebook 授權回來：還原填到一半的內容並打開廣告挑選器
+    const draft = restore ? sessionGet("wizard_draft") : null;
+    if (draft && simple && (draft.id || null) === (simple.id || null)) {
+      Object.assign(simple, draft.f);
+      simple._openPicker = true;
+    }
+    sessionDel("wizard_draft");
     if (simple) return renderSimpleEditor(el, simple, a);
     const adv = a ? JSON.parse(JSON.stringify(a)) : { name: "", enabled: 1, priority: 0, platform: "any", channel_id: null, trigger_type: "any_ad", trigger_value: "", steps: [{ type: "text", text: "" }] };
     return renderFlowBuilder(el, adv);
   }
 
   /* ---- 3 步驟精靈：什麼時候回覆 → 回覆什麼 → 確認上線 ---- */
+  const splitIds = (v) => String(v || "").split(/[,，\s]+/).map((x) => x.trim()).filter(Boolean);
   const TRIGGER_MAIN = ["any_ad", "keyword", "get_started"];
   const TRIGGER_MORE = ["ad", "ref", "default"];
   const TRIGGER_ASK = { any_ad: "有人點了我的廣告", keyword: "客人傳了特定字詞", get_started: "新朋友第一次私訊", ad: "只回應某一支廣告", ref: "依廣告參數 ref 分流", default: "其他所有訊息" };
@@ -1032,6 +1147,7 @@
         <div class="pick-list">${TRIGGER_MAIN.map(choice).join("")}</div>
         <details class="adv" style="margin-top:12px" ${TRIGGER_MORE.includes(f.trigger_type) ? "open" : ""}><summary>${icon("right")}其他情況</summary><div class="pick-list" style="margin-top:10px">${TRIGGER_MORE.map(choice).join("")}</div></details>
         ${T.needs ? `<label class="field" style="margin-top:20px"><span class="label">${T.needs}</span><input class="input" id="s-tv" data-err="tv" value="${esc(f.trigger_value)}" placeholder="${esc(T.ph)}"/><span class="error-text" data-err-for="tv"></span><span class="help">${T.help}</span></label>` : ""}
+        ${f.trigger_type === "ad" ? `<button type="button" class="btn btn-sm" id="pick-ad" style="margin-top:8px">${icon("search")}從我的廣告帳號選擇</button>` : ""}
         <p class="small muted" style="margin-top:24px">需要多則訊息、選單或分支？<a href="#automations/${original ? `flow/${original.id}` : "new/blank"}" id="to-advanced">改用視覺流程編輯器 →</a></p>`;
     };
     const wire0 = () => {
@@ -1054,6 +1170,22 @@
       });
       const tv = $("#s-tv");
       if (tv) tv.oninput = () => { f.trigger_value = tv.value; clearErr(tv); preview(); };
+      const openPicker = () =>
+        openAdPicker(
+          splitIds(f.trigger_value),
+          (ids) => {
+            if (!ids) return sessionSet("wizard_draft", { id: f.id || null, f });
+            f.trigger_value = ids.join(", ");
+            renderStep();
+            toast(`已選擇 ${ids.length} 支廣告`);
+          },
+          f.id ? `#automations/edit/${f.id}` : "#automations/new",
+        );
+      $("#pick-ad") && ($("#pick-ad").onclick = openPicker);
+      if (f._openPicker) {
+        delete f._openPicker;
+        setTimeout(openPicker, 0);
+      }
       if (!original) {
         $("#to-advanced").onclick = (e) => {
           e.preventDefault();
@@ -1073,6 +1205,7 @@
     const step1 = () => `<div class="eyebrow">第 2 步，共 3 步</div>
         <h2 class="wiz-title">回覆什麼？</h2>
         <p class="wiz-desc">一則訊息，加上帶客人去你網站的按鈕。手機會即時更新。</p>
+        ${original?.ad_json ? `<div class="note warn" style="margin-top:16px"><div>${icon("info")}<span>這則訊息已經放進廣告。修改後，儲存時會再給你一次新的 JSON，記得更新到廣告。</span></div></div>` : ""}
         <div class="preset-line"><span class="small muted">不知道怎麼寫？套用：</span>${USE_CASES.map((u) => `<button type="button" class="preset" data-case="${u.k}">${u.t}</button>`).join("")}</div>
         <div class="field" style="margin-top:16px">
           <div class="row between"><label class="label" for="s-message">訊息</label><button type="button" class="var-chip" data-var="{{first_name}}">${icon("plus")}插入客人名字</button></div>
@@ -1137,6 +1270,7 @@
         <h2 class="wiz-title">確認後上線</h2>
         <p class="wiz-desc">手機正在播放完整情境，可以點裡面的按鈕試試。</p>
         <ul class="checks" style="margin-top:4px">${checkItems().map((c) => `<li class="chk ${c.s}"><span class="ci">${icon(ICON_FOR[c.s])}</span><span>${c.t}</span></li>`).join("")}</ul>
+        ${AD_TRIGGER(f.trigger_type) ? `<div class="tip-card">${icon("rocket")}<div><b>讓客人一點廣告就看到這則訊息</b><span>${original && !isExample ? "可以把它放進 Messenger 廣告，客人不用先傳訊息。" : "儲存後會產生一段廣告 JSON，貼進 Messenger 廣告，客人不用先傳訊息就會看到。"}</span>${original && !isExample ? `<button type="button" class="btn btn-sm" id="w-json" style="margin-top:8px">${icon("code")}取得廣告 JSON</button>` : ""}</div></div>` : ""}
         <label class="field" style="margin-top:24px"><span class="label">幫它取個名字</span><input class="input" id="s-name" value="${esc(stripExample(f.name))}" placeholder="給自己看的名字"/></label>
         <details class="adv" style="margin-top:16px"><summary>${icon("right")}更多設定（選填）</summary>
           <div class="stack" style="margin-top:16px">
@@ -1150,6 +1284,7 @@
           </div>
         </details>`;
     const wire2 = () => {
+      $("#w-json") && ($("#w-json").onclick = () => openAdJson(original));
       $("#s-name").oninput = (e) => (f.name = e.target.value);
       $("#s-platform").onchange = (e) => (f.platform = e.target.value);
       $("#s-tag").oninput = (e) => { f.tag = e.target.value; preview(); };
@@ -1201,10 +1336,11 @@
         const body = simpleToAutomation(f);
         body.enabled = f.id && !isExample ? !!f.enabled : true;
         try {
-          if (f.id) await api(`/automations/${f.id}`, { method: "PUT", body });
-          else await api("/automations", { method: "POST", body });
+          const saved = f.id ? await api(`/automations/${f.id}`, { method: "PUT", body }) : await api("/automations", { method: "POST", body });
           toast(isExample || isNew ? "自動回覆已啟用 🎉" : "已儲存");
-          location.hash = "#automations";
+          // 廣告觸發的新回覆（或已放進廣告的回覆被修改）→ 直接給廣告 JSON
+          const offerJson = AD_TRIGGER(saved.trigger_type) && (isNew || isExample || original?.ad_json);
+          location.hash = offerJson ? `#automations?adjson=${saved.id}` : "#automations";
         } catch (err) {
           toast(err.message, true);
         }
@@ -1794,8 +1930,10 @@
     if (args[0] === "connect" && args[1]) return renderConnect(el, args[1]);
     const [list, o] = await Promise.all([api("/channels"), api("/overview")]);
     const connectBtn = o.app_configured ? `<a class="btn btn-fb" href="/auth/facebook">${icon("facebook")}連接 Facebook</a>` : "";
+    const broken = list.filter((c) => c.status === "broken");
     el.innerHTML = `<div class="page narrow">
       ${pageHead("連接帳號", "連接粉絲專頁與 Instagram 後，自動回覆才會生效。", list.length ? connectBtn : "")}
+      ${broken.length && o.app_configured ? `<div class="banner danger">${icon("alert")}<div class="grow"><b>有 ${broken.length} 個帳號的連線失效，</b>自動回覆送不出去。常見原因：改了 Facebook 密碼、移除了 App 授權，或你不再是專頁管理員。重新連接就會恢復。</div><a class="btn btn-sm btn-primary" href="/auth/facebook">${icon("facebook")}重新連接</a></div>` : ""}
       ${!o.app_configured ? (isOwner() ? `<div class="banner brand">${icon("sliders")}<div class="grow">要先完成 Meta App 設定，才能連接粉絲專頁。</div><a class="btn btn-sm btn-primary" href="#setup/meta">前往設定</a></div>` : `<div class="banner warning">${icon("info")}<div class="grow">平台管理員還沒完成設定，暫時無法連接。</div></div>`) : ""}
       <div class="card">
         ${list.length
@@ -1803,8 +1941,8 @@
               .map(
                 (c) => `<div class="conn">
                   <div class="ci ${c.platform === "instagram" ? "ig" : "fb"}">${icon(c.platform === "instagram" ? "instagram" : "facebook")}</div>
-                  <div class="cm"><b>${esc(c.name)}</b><span>${c.platform === "instagram" ? "Instagram 專業帳號" : "Facebook 粉絲專頁"} · ID ${esc(c.external_id)}</span></div>
-                  <span class="badge success"><span class="bdot"></span>已連接</span>
+                  <div class="cm"><b>${esc(c.name)}</b><span>${c.platform === "instagram" ? "Instagram 專業帳號" : "Facebook 粉絲專頁"} · ID ${esc(c.external_id)}</span>${c.status === "broken" && c.last_error ? `<span class="conn-err">${esc(c.last_error)}</span>` : ""}</div>
+                  ${c.status === "broken" ? '<span class="badge danger"><span class="bdot"></span>需要重新連接</span>' : '<span class="badge success"><span class="bdot"></span>已連接</span>'}
                   <div class="row" style="gap:2px">
                     <button class="btn btn-ghost btn-sm" data-test="${c.id}" data-busy="檢查中">檢查</button>
                     ${c.platform === "messenger" ? `<button class="btn btn-ghost btn-sm" data-sub="${c.id}" data-busy="處理中" title="重新訂閱 Webhook 並設定開始使用按鈕">修復</button>` : ""}
@@ -1819,11 +1957,11 @@
               connectBtn || `<button class="btn" disabled>${icon("facebook")}連接 Facebook</button>`,
             )}
       </div>
-      ${list.length ? "" : `<div class="grid-3" style="margin-top:16px">
+      ${list.length ? "" : `<div class="grid-2" style="margin-top:16px">
         ${miniInfo("shield", "安全", "我們只取得傳送訊息需要的權限，不會在你的專頁發文。")}
         ${miniInfo("zap", "全自動", "連接後會自動完成 Webhook 訂閱與「開始使用」按鈕設定。")}
-        ${miniInfo("instagram", "Instagram", "IG 需先切換成專業帳號，並在 Meta 商業套件綁定到粉絲專頁。")}
       </div>`}
+      <div class="stack-sm" style="margin-top:16px">${IG_CHECKLIST(list.some((c) => c.platform === "instagram"))}${CONFLICT_TIP}</div>
       <details class="adv" style="margin-top:24px"><summary>${icon("right")}進階：用存取權杖手動新增</summary>
         <div class="card" style="margin-top:12px"><div class="card-body stack">
           <div class="grid-2">
@@ -1848,8 +1986,9 @@
         }
       });
     $$("[data-test]", el).forEach((b) => (b.onclick = () => busy(b, async () => {
-      try { const r = await api(`/channels/${b.dataset.test}/test`, { method: "POST" }); toast(`連線正常：${r.result.name || r.result.id}`); }
+      try { const r = await api(`/channels/${b.dataset.test}/test`, { method: "POST" }); toast(`連線正常：${r.result.name || r.result.id}${r.resubscribed ? "（已自動補上訂閱設定）" : ""}`); }
       catch (err) { toast(`連線有問題：${err.message}。請重新連接 Facebook。`, true); }
+      PAGES.connections(el, []);
     })));
     $$("[data-sub]", el).forEach((b) => (b.onclick = () => busy(b, async () => {
       try { await api(`/channels/${b.dataset.sub}/subscribe`, { method: "POST" }); toast("已重新設定完成"); } catch (err) { toast(err.message, true); }
@@ -1862,12 +2001,21 @@
       PAGES.connections(el, []);
     }));
   };
+  /** Instagram 收不到自動回覆時最常見的三個原因 */
+  const IG_CHECKLIST = (open = false) => `<details class="adv check-box" ${open ? "" : ""}><summary>${icon("right")}${icon("instagram").replace("<svg", '<svg style="width:16px;height:16px;color:#d62976"')}Instagram 收不到自動回覆？檢查這 3 件事</summary>
+      <ol class="todo-list num">
+        <li><b>切換成專業帳號：</b>Instagram App →「設定和動態 → 帳號類型和工具」→ 切換為商業或創作者帳號。</li>
+        <li><b>綁定到粉絲專頁：</b>在 Meta 商業套件或粉絲專頁「設定 → 已連結的帳號」連結這個 Instagram，再回來重新連接 Facebook。</li>
+        <li><b>允許存取訊息（最常漏掉）：</b>Instagram App →「設定和動態 → 訊息和限時動態回覆 → 訊息控制 → 已連結的工具」→ 打開「允許存取訊息」。</li>
+      </ol></details>`;
+  const CONFLICT_TIP = `<details class="adv check-box"><summary>${icon("right")}${icon("message").replace("<svg", '<svg style="width:16px;height:16px;color:var(--brand)"')}避免客人收到兩則回覆</summary>
+      <p class="small muted" style="margin:10px 0 0">如果專頁在 Meta 商業套件開著「即時回覆」「常見問題」或「離開訊息」，客人會同時收到它和這裡的回覆。到 <a href="${BIZ_AUTOMATIONS}" target="_blank" rel="noopener">Meta 商業套件 → 收件匣 → 自動化</a> 把它們關掉。小編在收件匣回覆客人時，這裡會自動暫停那位客人的自動回覆 30 分鐘。</p></details>`;
   const miniInfo = (ic, t, d) => `<div class="card card-body" style="padding:16px 18px"><div class="row" style="gap:8px;margin-bottom:4px;color:var(--text)">${icon(ic).replace("<svg", '<svg style="width:16px;height:16px;color:var(--brand)"')}<b>${t}</b></div><p class="small muted">${d}</p></div>`;
 
   async function renderConnect(el, pendingId) {
-    let pages;
+    let pages, missing, missingIg;
     try {
-      pages = await api(`/facebook/pending/${pendingId}`);
+      ({ pages, missing, missing_instagram: missingIg } = await api(`/facebook/pending/${pendingId}`));
     } catch (err) {
       toast(err.message, true);
       location.hash = "#connections";
@@ -1876,6 +2024,8 @@
     el.innerHTML = `<div class="page narrow">
       ${backLink("#connections", "連接帳號")}
       ${pageHead("選擇要連接的粉絲專頁", "勾選後按「連接」，其餘設定會自動完成。")}
+      ${missing.length ? `<div class="banner danger">${icon("alert")}<div class="grow"><b>授權時沒有允許：${missing.map((m) => esc(m.label)).join("、")}。</b> 少了這些權限，自動回覆無法運作。按「重新授權」，在 Facebook 視窗把所有項目都打開。</div><a class="btn btn-sm btn-primary" href="/auth/facebook?rerequest=1">重新授權</a></div>` : ""}
+      ${!missing.length && missingIg.length ? `<div class="banner warning">${icon("instagram")}<div class="grow"><b>沒有允許 Instagram 的權限（${missingIg.map((m) => esc(m.label)).join("、")}），</b>Instagram 的私訊不會自動回覆。只用 Messenger 的話可以忽略。</div><a class="btn btn-sm" href="/auth/facebook?rerequest=1">重新授權</a></div>` : ""}
       <div class="card"><div class="card-body stack-sm" id="pick">
         ${pages
           .map(
@@ -1898,12 +2048,18 @@
         try {
           const r = await api("/facebook/connect", { method: "POST", body: { pending_id: pendingId, page_ids: ids } });
           const ok = r.results.every((x) => x.subscribed && !x.errors.length);
+          const hasIg = r.results.some((x) => x.instagram);
           el.innerHTML = `<div class="page narrow"><div class="card">${empty(
             ok ? "check" : "alert",
             ok ? "連接完成" : "已連接，但有部分設定沒完成",
             r.results.map((x) => `<b>${esc(x.name)}</b>${x.instagram ? ` 與 Instagram @${esc(x.instagram)}` : ""}${x.errors.length ? `<br/><span style="color:var(--danger)">${x.errors.map(esc).join("<br/>")}</span>` : ""}`).join("<br/>"),
-            `<a class="btn btn-primary" href="#automations/new/ad">${icon("plus")}建立自動回覆</a><a class="btn" href="#connections">查看連接</a>`,
-          )}</div></div>`;
+            `<a class="btn btn-primary" href="#automations/new">${icon("plus")}建立自動回覆</a><a class="btn" href="#connections">查看連接</a>`,
+          )}</div>
+          <div class="card card-body" style="margin-top:16px"><div class="section-title">上線前再確認 ${hasIg ? "2" : "1"} 件事</div>
+            <ol class="todo-list num" style="margin-top:10px">
+              <li><b>關掉專頁原本的自動回覆：</b>到 <a href="${BIZ_AUTOMATIONS}" target="_blank" rel="noopener">Meta 商業套件 → 自動化</a> 關閉「即時回覆」「常見問題」，客人才不會收到兩則。</li>
+              ${hasIg ? `<li><b>Instagram 允許存取訊息：</b>Instagram App →「設定和動態 → 訊息和限時動態回覆 → 訊息控制 → 已連結的工具」→ 打開「允許存取訊息」。</li>` : ""}
+            </ol></div></div>`;
         } catch (err) {
           toast(err.message, true);
         }
@@ -1938,8 +2094,10 @@
   async function renderContact(el, id) {
     const { contact: c, events: evs } = await api(`/contacts/${id}`);
     const name = [c.first_name, c.last_name].filter(Boolean).join(" ") || "（未取得名字）";
+    const paused = c.paused_until && Date.parse(c.paused_until) > Date.now();
     el.innerHTML = `<div class="page">
       ${backLink("#contacts", "聯絡人")}
+      ${paused ? `<div class="banner info">${icon("pause")}<div class="grow"><b>小編接手中，</b>這位客人的自動回覆暫停到 ${fmtTime(c.paused_until)}。</div><button class="btn btn-sm" id="c-resume">${icon("play")}現在恢復自動回覆</button></div>` : ""}
       ${pageHead(name, `${platformBadge(c.platform)} · 第一次互動 ${fmtDate(c.first_seen)}`, `<button class="btn btn-danger" id="c-del">${icon("trash")}刪除</button>`)}
       <div class="editor" style="grid-template-columns:minmax(0,1fr) 340px">
         <div class="card"><div class="card-head"><h3>互動記錄</h3></div>${evs.length ? `<div class="timeline">${evs.map(tlItem).join("")}</div>` : empty("activity", "沒有記錄", "")}</div>
@@ -1960,6 +2118,7 @@
     $("#m-send").onclick = (e) => busy(e.currentTarget, async () => {
       try { await api(`/contacts/${id}/send`, { method: "POST", body: { text: $("#m-text").value } }); toast("已傳送"); renderContact(el, id); } catch (err) { toast(err.message, true); }
     });
+    $("#c-resume") && ($("#c-resume").onclick = async () => { await api(`/contacts/${id}/resume`, { method: "POST" }); toast("已恢復自動回覆"); renderContact(el, id); });
     $("#c-del").onclick = async () => {
       if (!(await confirmDialog("刪除聯絡人", "會刪除這位聯絡人的資料，無法復原。", "刪除", true))) return;
       await api(`/contacts/${id}`, { method: "DELETE" });
@@ -1973,6 +2132,7 @@
   const EV = {
     automation: ["自動回覆", "brand"], sent: ["已送出", "success"], message: ["收到訊息", ""], postback: ["按下按鈕", ""], referral: ["廣告進入", "info"],
     click: ["點擊連結", "success"], info: ["系統", "info"], warning: ["注意", "warning"], error: ["錯誤", "danger"],
+    handover: ["小編接手", "info"], paused: ["暫停中", ""], conflict: ["重複回覆", "warning"],
   };
   const tlItem = (e) => {
     const [label, cls] = EV[e.type] || [e.type, ""];
@@ -2092,6 +2252,26 @@
     { id: "payuni", title: "PayUni 金流", desc: "讓用戶能線上付款" },
     { id: "plans", title: "方案與價格", desc: "用戶可購買的方案" },
   ];
+  /** 送審時每個權限的用途說明（審查人員看英文） */
+  const REVIEW_COPY = [
+    { perm: "pages_messaging", zh: "用粉絲專頁傳送訊息", en: "Our platform lets businesses automatically reply to people who message their Facebook Page, mainly people who click their Click-to-Messenger ads. When a message or ad referral arrives, we send the reply the business configured (text and buttons linking to the business's own website). Messages are only sent in response to the person's action, within the standard messaging window." },
+    { perm: "pages_show_list", zh: "列出粉絲專頁", en: "After the business logs in with Facebook, we list the Pages they manage so they can choose which Page to connect to the auto-reply service. We only store the Pages they select." },
+    { perm: "pages_manage_metadata", zh: "接收專頁的新訊息通知", en: "We use this permission to subscribe the selected Page to our app's webhooks (messages, postbacks, referrals, message echoes) and to set the Messenger \"Get Started\" button, so we can receive messages and reply automatically." },
+    { perm: "pages_read_engagement", zh: "讀取專頁基本資料", en: "We read the Page name and basic metadata to show the business which Page is connected in their dashboard and to verify the connection is healthy." },
+    { perm: "business_management", zh: "讀取商業管理平台中的專頁", en: "Many businesses manage their Pages through Business Manager. This permission lets us list those Pages during connection so the business can select them." },
+    { perm: "instagram_basic", zh: "讀取 Instagram 帳號", en: "We read the Instagram professional account linked to the business's Page (ID and username) so the business can connect it and see it in the dashboard." },
+    { perm: "instagram_manage_messages", zh: "收發 Instagram 私訊", en: "We automatically reply to Instagram Direct messages and Click-to-Instagram ad referrals with the reply the business configured, including links to the business's website. Replies are only sent in response to the person's message." },
+    { perm: "ads_read", zh: "讀取廣告清單", optional: true, en: "Optional. When the business sets up an auto-reply for a specific ad, we list the ads in their ad accounts (name, ID and status only) so they can pick the ad instead of copying the ad ID manually, and show how many conversations each ad started." },
+  ];
+  const SCREENCAST = `1. Open the platform and log in as a business user.
+2. Go to "Connect accounts" and click "Connect Facebook". Show the Facebook login dialog and the permissions requested, select a Page and its Instagram account, then confirm.
+3. Show the connected Page and Instagram account in the dashboard.
+4. Create an auto-reply: trigger "Someone clicked my ad", message text, and a button that links to the business website. Save it.
+5. From a separate test Facebook account, open the Page in Messenger (or click a test Click-to-Messenger ad) and send a message. Show the automatic reply arriving with the button, then tap the button and show the website opening.
+6. Repeat step 5 on Instagram Direct for instagram_manage_messages.
+7. Show the "Contacts" page listing the person who messaged.`;
+  const copyBlock = (text) => `<div class="copy-block"><pre>${esc(text)}</pre><button type="button" class="btn btn-sm" data-copy="${esc(text)}">${icon("copy")}複製</button></div>`;
+
   PAGES.setup = async (el, args) => {
     if (!isOwner()) return (location.hash = "#home");
     const [s, plans] = await Promise.all([api("/settings"), api("/billing/plans")]);
@@ -2140,7 +2320,11 @@
             </div>
             <div class="row"><button class="btn" id="m-test" data-busy="測試中">${icon("check")}儲存並測試</button><span id="m-test-result"></span></div>
           </div></li>
-          <li><div><b>設定登入回呼網址</b><p class="muted small">到「Facebook 登入（商家版）→ 設定」，把下面的網址貼到「有效的 OAuth 重新導向 URI」並儲存。</p>${copyField(s.oauth_redirect_url)}</div></li>
+          <li><div><b>設定登入回呼網址</b><p class="muted small">到「Facebook 登入（商家版）→ 設定」，把下面的網址貼到「有效的 OAuth 重新導向 URI」並儲存。</p>${copyField(s.oauth_redirect_url)}
+            <details class="adv" ${s.meta_login_config_id ? "open" : ""}><summary>${icon("right")}Meta 要求建立「設定」？填入設定 ID</summary>
+              <div class="stack-sm" style="margin-top:10px"><p class="small muted">商家類型的 App 有時要先在「Facebook 登入（商家版）→ 設定」建立一組設定：登入類型選「用戶存取權杖」，權限勾選 ${REVIEW_COPY.filter((r) => !r.optional).map((r) => `<code>${r.perm}</code>`).join("、")}，資產勾選「粉絲專頁」與「Instagram 帳號」。建立後把設定 ID 貼到這裡；不需要就留空。</p>
+                <label class="field"><span class="label">設定 ID（選填）</span><input class="input" id="m-config" value="${esc(s.meta_login_config_id)}" inputmode="numeric" placeholder="例如 1234567890123456"/></label></div></details>
+          </div></li>
           <li><div><b>登記 Webhook</b><p class="muted small">讓 Meta 把訊息送到這個平台。按下按鈕自動完成。</p>
             <div class="row"><button class="btn" id="m-hook" data-busy="登記中" ${s.meta_app_secret_set ? "" : "disabled"}>${icon("zap")}自動登記 Webhook</button><span id="m-hook-result"></span></div>
             <details class="adv"><summary>${icon("right")}自動登記失敗？手動設定</summary>
@@ -2150,10 +2334,31 @@
                 <span class="small"><b>訂閱欄位</b>：${s.webhook_fields.map((f) => `<code>${f}</code>`).join("、")}</span>
               </div></details>
           </div></li>
-          <li><div><b>送審並上線</b><p class="muted small">App 在開發模式時，只有你加入的測試人員能收到自動回覆。要開放給所有客人，在「應用程式審查」申請 <code>pages_messaging</code>、<code>pages_show_list</code>、<code>pages_manage_metadata</code>、<code>instagram_basic</code>、<code>instagram_manage_messages</code>，通過後切換到上線模式。可以先完成其他設定，不影響使用。</p></div></li>
+          <li><div><b>填入隱私權政策與資料刪除網址</b><p class="muted small">App 要切換到上線模式，Meta 規定一定要有這些網址。頁面已經做好了，複製貼上即可。<a href="/privacy" target="_blank" rel="noopener">預覽隱私權政策 ↗</a></p>
+            <div class="stack-sm">
+              <span class="small"><b>隱私政策網址</b>（應用程式設定 → 基本資料）</span>${copyField(s.privacy_url)}
+              <span class="small"><b>服務條款網址</b>（應用程式設定 → 基本資料）</span>${copyField(s.terms_url)}
+              <span class="small"><b>用戶資料刪除</b>（應用程式設定 → 基本資料，選「資料刪除回呼網址」）</span>${copyField(s.data_deletion_url)}
+              <span class="small"><b>取消授權回呼網址</b>（Facebook 登入（商家版）→ 設定）</span>${copyField(s.deauthorize_url)}
+              <label class="field" style="margin-top:6px"><span class="label">頁面上的聯絡信箱</span><input class="input" id="m-email" type="email" value="${esc(s.support_email)}" placeholder="${esc(state.me.user.email)}"/><span class="help">客人要求刪除資料時寫信到這裡。留空會用你的登入 Email。</span></label>
+            </div></div></li>
+          <li><div><b>完成商家驗證</b><p class="muted small">要讓其他商家用你的 App 收發訊息，Meta 會要求你的公司通過驗證。這一步只能由你本人在 Meta 完成：</p>
+            <ul class="todo-list">
+              <li>到 <a href="https://business.facebook.com/settings/security" target="_blank" rel="noopener">企業管理平台 → 安全中心</a> 按「開始驗證」</li>
+              <li>準備公司登記資料：公司名稱、統一編號、地址、電話（要跟登記文件一致）</li>
+              <li>準備一個能收信的公司網域 Email，或可以放驗證檔的網站</li>
+              <li>在 App 的「應用程式設定 → 基本資料」把 App 連到這個企業管理平台</li>
+              <li>若 App 主控板出現「存取驗證」或「技術供應商驗證」，照指示填寫：用途選「為其他商家提供服務」</li>
+            </ul></div></li>
+          <li><div><b>送審並上線</b><p class="muted small">App 在開發模式時，只有你加入的測試人員能收到自動回覆。要開放給所有人，到「應用程式審查 → 權限與功能」申請下面的權限，通過後把 App 切換到「上線」。說明文字已經寫好（審查人員看英文），點一下就能複製。</p>
+            <div class="review-list">${REVIEW_COPY.map((r) => `<details class="review-item"><summary><code>${r.perm}</code><span>${esc(r.zh)}</span>${r.optional ? '<span class="badge">選用</span>' : ""}${icon("right")}</summary>
+              <div class="stack-sm"><span class="small muted">貼到「說明你的 App 如何使用這個權限」：</span>${copyBlock(r.en)}</div></details>`).join("")}
+              <details class="review-item"><summary><code>錄影示範</code><span>每個權限都要附一段操作影片</span>${icon("right")}</summary>
+                <div class="stack-sm"><span class="small muted">照這個順序錄一支影片（可以共用），畫面要看得到網址與 Facebook 授權視窗：</span>${copyBlock(SCREENCAST)}</div></details>
+            </div></div></li>
         </ol></div>${footer()}</div>`;
       const saveKeys = async () => {
-        const payload = { meta_app_id: $("#m-id").value.trim() };
+        const payload = { meta_app_id: $("#m-id").value.trim(), meta_login_config_id: $("#m-config").value.trim(), support_email: $("#m-email").value.trim() };
         if ($("#m-secret").value.trim()) payload.meta_app_secret = $("#m-secret").value.trim();
         await save(payload);
       };

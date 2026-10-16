@@ -24,9 +24,24 @@ export function parseWebhook(body: unknown): IncomingEvent[] {
       const sender = (m.sender as { id?: string } | undefined)?.id;
       const recipient = (m.recipient as { id?: string } | undefined)?.id;
       if (!sender) continue;
-      // 專頁自己送出的訊息（echo）不處理
       const message = m.message as Record<string, unknown> | undefined;
-      if (message?.is_echo) continue;
+      // 專頁自己送出的訊息（echo）：用來判斷小編是否接手對話，sender_id 改放客人的 ID
+      if (message?.is_echo) {
+        if (!recipient) continue;
+        out.push({
+          platform,
+          channel_external_id: channelExternalId,
+          sender_id: recipient,
+          timestamp: Number(m.timestamp ?? Date.now()),
+          kind: "echo",
+          text: typeof message.text === "string" ? message.text : null,
+          postback_payload: null,
+          referral: null,
+          echo_app_id: message.app_id != null ? String(message.app_id) : null,
+          raw: m,
+        });
+        continue;
+      }
       // 有些情況 sender 是專頁自己
       if (recipient && sender === channelExternalId) continue;
 

@@ -91,7 +91,7 @@ describe("parseWebhook", () => {
     expect(ev.referral?.ref).toBeNull();
   });
 
-  it("忽略 echo、read、delivery 事件", () => {
+  it("echo 轉成 echo 事件（sender 改成客人）；read、delivery 忽略", () => {
     const body = {
       object: "page",
       entry: [
@@ -105,7 +105,9 @@ describe("parseWebhook", () => {
         },
       ],
     };
-    expect(parseWebhook(body)).toHaveLength(0);
+    const evs = parseWebhook(body);
+    expect(evs).toHaveLength(1);
+    expect(evs[0]).toMatchObject({ kind: "echo", sender_id: "U", echo_app_id: null, text: "hi" });
   });
 
   it("quick reply 視為 postback", () => {

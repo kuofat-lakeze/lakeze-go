@@ -3,6 +3,7 @@ import { openDb, plans, settingsStore, users } from "./db.js";
 import { createGraphSender } from "./meta/sendApi.js";
 import { createApp } from "./app.js";
 import { seedExamplesForExistingUsers } from "./examples.js";
+import { scheduleHealthChecks } from "./engine/health.js";
 import { hashPassword, KEYS, metaConfig, payuniConfig, resolvePublicUrl, seedFromEnv } from "./settings.js";
 
 const db = openDb(config.databasePath);
@@ -23,6 +24,7 @@ if (users.count(db) === 0 && process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWO
 seedExamplesForExistingUsers(db);
 
 const app = createApp({ db, sender: createGraphSender(() => metaConfig(db).graphVersion) });
+scheduleHealthChecks(db);
 
 app.listen(config.port, () => {
   const configured = settingsStore.get(db, KEYS.publicUrl);

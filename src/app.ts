@@ -10,6 +10,8 @@ import { facebookRouter } from "./routes/facebook.js";
 import { apiRouter } from "./routes/api.js";
 import { billingApiRouter, payuniCallbackRouter } from "./routes/billing.js";
 import { HttpError } from "./routes/errors.js";
+import { metaCallbacksRouter } from "./routes/meta.js";
+import { legalRouter } from "./routes/legal.js";
 
 export interface AppOptions {
   db: DB;
@@ -30,6 +32,8 @@ export function createApp(opts: AppOptions) {
   app.use("/r", redirectRouter(db));
   app.use("/auth/facebook", facebookRouter(db, fetchImpl));
   app.use("/payuni", payuniCallbackRouter(db));
+  app.use("/meta", metaCallbacksRouter(db));
+  app.use(legalRouter(db));
 
   app.use(express.json({ limit: "1mb" }));
   app.use("/api/auth", authRouter(db));

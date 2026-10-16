@@ -16,6 +16,8 @@ export interface RunContext {
   text: string | null;
   /** 模擬模式：不寫入事件記錄、不累計觸發次數、不建立追蹤連結 */
   dryRun?: boolean;
+  /** 略過這個索引的步驟（客人已經在廣告裡看過這則訊息） */
+  skipStep?: number;
   sleep?: (ms: number) => Promise<void>;
 }
 
@@ -37,7 +39,8 @@ export async function runAutomation(automation: Automation, ctx: RunContext, dep
     });
   }
 
-  for (const step of automation.steps) {
+  for (const [i, step] of automation.steps.entries()) {
+    if (depth === 0 && i === ctx.skipStep) continue;
     try {
       await runStep(step, automation, ctx, depth);
     } catch (err) {

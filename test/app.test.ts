@@ -2,7 +2,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Server } from "node:http";
 import { createApp } from "../src/app.js";
 import { openDb, channels, contacts, automations, links, settingsStore, users, plans, orders } from "../src/db.js";
-import { createCaptureSender } from "../src/meta/sendApi.js";
+import { createCaptureSender, SendError, type Sender } from "../src/meta/sendApi.js";
+import { createHmac } from "node:crypto";
+import { handleIncomingEvent } from "../src/engine/handler.js";
+import { stripVariables } from "../src/engine/adJson.js";
 import { signBody } from "../src/meta/signature.js";
 import { KEYS } from "../src/settings.js";
 import { encrypt, hashInfo, toQueryString } from "../src/billing/payuni.js";
@@ -16,6 +19,8 @@ const sender = createCaptureSender();
 
 /** 假的 Graph API */
 const graphCalls: string[] = [];
+/** 授權時客人實際允許的權限（測試可改） */
+let grantedPerms = ["pages_show_list", "pages_messaging", "pages_manage_metadata", "pages_read_engagement", "business_management", "instagram_basic", "instagram_manage_messages"];
 const fakeFetch: typeof fetch = async (input, init) => {
   const url = String(input);
   graphCalls.push(`${init?.method ?? "GET"} ${url.split("?")[0]}`);
@@ -28,6 +33,15 @@ const fakeFetch: typeof fetch = async (input, init) => {
         { id: "PAGE_B", name: "B 專頁", access_token: "PAGE_B_TOKEN" },
       ],
     });
+  }
+  if (url.includes("/me/permissions")) {
+    const all = ["pages_show_list", "pages_messaging", "pages_manage_metadata", "instagram_basic", "instagram_manage_messages", "ads_read"];
+    return json({ data: all.map((permission) => ({ permission, status: grantedPerms.includes(permission) ? "granted" : "declined" })) });
+  }
+  if (url.includes("/me/adaccounts")) return json({ data: [{ id: "act_1", name: "主要廣告帳號" }] });
+  if (url.includes("/act_1/ads")) return json({ data: [{ id: "AD777", name: "秋季新品", effective_status: "ACTIVE", campaign: { name: "秋季活動" } }] });
+  if (url.includes("/subscribed_apps") && (init?.method ?? "GET") === "GET") {
+    return json({ data: [{ id: "APP123", subscribed_fields: ["messages", "messaging_postbacks", "messaging_referrals", "messaging_optins"] }] });
   }
   if (url.includes("/subscribed_apps")) return json({ success: true });
   if (url.includes("/me/messenger_profile")) return json({ result: "success" });
@@ -161,8 +175,9 @@ describe("Facebook 連接（多用戶）", () => {
     await signup("bob", "bob@example.com");
     expect((await call("bob", "GET", `/facebook/pending/${pendingId}`)).status).toBe(404);
 
-    const pages = (await call("alice", "GET", `/facebook/pending/${pendingId}`)).body as unknown as { id: string }[];
-    expect(pages.map((p) => p.id)).toEqual(["PAGE_A", "PAGE_B"]);
+    const pend = (await call("alice", "GET", `/facebook/pending/${pendingId}`)).body as unknown as { pages: { id: string }[]; missing: unknown[] };
+    expect(pend.pages.map((p) => p.id)).toEqual(["PAGE_A", "PAGE_B"]);
+    expect(pend.missing).toEqual([]);
     const r = await call("alice", "POST", "/facebook/connect", { pending_id: pendingId, page_ids: ["PAGE_A"] });
     expect((r.body.results as { subscribed: boolean; instagram: string }[])[0]).toMatchObject({ subscribed: true, instagram: "a_shop" });
     expect(channels.byExternalId(db, "PAGE_A")!.user_id).toBe(users.byEmail(db, "alice@example.com")!.id);
@@ -355,5 +370,244 @@ describe("範例自動回覆", () => {
     db.prepare("UPDATE users SET examples_seeded = 0 WHERE id = ?").run(carol.id);
     seedExamplesForExistingUsers(db);
     expect(automations.list(db, carol.id).length).toBe(before + EXAMPLES.length);
+  });
+});
+
+/* ---------------- 串接改善 ---------------- */
+
+const echoEvent = (customer: string, timestamp: number, appId?: string) => ({
+  object: "page",
+  entry: [{ id: PAGE_ID, messaging: [{ sender: { id: PAGE_ID }, recipient: { id: customer }, timestamp, message: { is_echo: true, text: "小編來了", ...(appId ? { app_id: appId } : {}) } }] }],
+});
+const textEvent = (customer: string, timestamp: number, text: string) => ({
+  object: "page",
+  entry: [{ id: PAGE_ID, messaging: [{ sender: { id: customer }, recipient: { id: PAGE_ID }, timestamp, message: { mid: `m${timestamp}`, text } }] }],
+});
+function signedRequest(payload: Record<string, unknown>, secret = APP_SECRET) {
+  const b64 = (b: Buffer) => b.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const body = b64(Buffer.from(JSON.stringify({ algorithm: "HMAC-SHA256", ...payload })));
+  return `${b64(createHmac("sha256", secret).update(body).digest())}.${body}`;
+}
+
+describe("廣告 JSON", () => {
+  it("移除個人化變數並整理標點", () => {
+    expect(stripVariables("嗨 {{first_name}} 👋 謝謝你！").text).toBe("嗨 👋 謝謝你！");
+    expect(stripVariables("{{first_name}} 你好！").text).toBe("你好！");
+    expect(stripVariables("歡迎 {{first_name}}，想先了解什麼？").text).toBe("歡迎，想先了解什麼？");
+    expect(stripVariables("沒有變數").removed).toBe(false);
+  });
+
+  it("產生 JSON：第一則訊息、追蹤連結；開啟後客人從廣告進來不重複送第一則", async () => {
+    const alice = users.byEmail(db, "alice@example.com")!;
+    const auto = automations.list(db, alice.id).find((a) => a.name === "廣告接待")!;
+    // 讓按鈕訊息變成第一則，方便驗證 web_url
+    await call("alice", "PUT", `/automations/${auto.id}`, {
+      ...auto,
+      steps: [
+        { type: "buttons", text: "嗨 {{first_name}}，點這裡前往", buttons: [{ type: "url", title: "前往官網", url: "https://shop.example.com/landing" }] },
+        { type: "text", text: "有問題直接留言喔" },
+        { type: "tag", tag: "ad-lead" },
+      ],
+    });
+    const r = await call("alice", "GET", `/automations/${auto.id}/ad-json`);
+    expect(r.status).toBe(200);
+    const msg = (r.body.json as { message: { attachment: { payload: { text: string; buttons: { type: string; url: string }[] } } } }).message;
+    expect(msg.attachment.payload.text).toBe("嗨，點這裡前往");
+    expect(msg.attachment.payload.buttons[0].type).toBe("web_url");
+    expect(msg.attachment.payload.buttons[0].url).toMatch(/^https:\/\/bot\.example\.com\/r\/[\w-]+$/);
+    expect((r.body.warnings as string[]).some((w) => w.includes("first_name"))).toBe(true);
+    expect(r.body.ad_json).toBe(false);
+
+    // 沒開啟前：照常送兩則
+    sender.sent.length = 0;
+    await postWebhook(adEvent("USER_J1", 1700000000101));
+    await sleep(40);
+    expect(sender.sent).toHaveLength(2);
+
+    expect((await call("alice", "PATCH", `/automations/${auto.id}/ad-json`, { enabled: true })).body.ad_json).toBe(true);
+    sender.sent.length = 0;
+    await postWebhook(adEvent("USER_J2", 1700000000102));
+    await sleep(40);
+    expect(sender.sent).toHaveLength(1);
+    expect(sender.sent[0].message.text).toBe("有問題直接留言喔");
+    const ch = channels.byExternalId(db, PAGE_ID)!;
+    expect(contacts.find(db, ch.id, "USER_J2")!.tags).toEqual(["ad-lead"]);
+    // bob 拿不到 alice 的 JSON
+    expect((await call("bob", "GET", `/automations/${auto.id}/ad-json`)).status).toBe(404);
+    await call("alice", "PATCH", `/automations/${auto.id}/ad-json`, { enabled: false });
+  });
+});
+
+describe("小編接手與自動回覆衝突", () => {
+  it("小編在收件匣回覆 → 這位客人暫停自動回覆；恢復後照常", async () => {
+    const alice = users.byEmail(db, "alice@example.com")!;
+    await call("alice", "POST", "/automations", { name: "價格", trigger_type: "keyword", trigger_value: "價格", steps: [{ type: "text", text: "價格在這裡" }] });
+    await postWebhook(textEvent("USER_H", 1700000000201, "哈囉"));
+    await sleep(30);
+    const ch = channels.byExternalId(db, PAGE_ID)!;
+    const c = contacts.find(db, ch.id, "USER_H")!;
+    // 本平台自己送的 echo 不算
+    await postWebhook(echoEvent("USER_H", 1700000000202, "APP123"));
+    await sleep(20);
+    expect(contacts.get(db, c.id)!.paused_until ?? null).toBeNull();
+    // 小編手動回覆（沒有 app_id）
+    await postWebhook(echoEvent("USER_H", 1700000000203));
+    await sleep(20);
+    expect(Date.parse(contacts.get(db, c.id)!.paused_until!)).toBeGreaterThan(Date.now());
+    sender.sent.length = 0;
+    await postWebhook(textEvent("USER_H", 1700000000204, "請問價格"));
+    await sleep(30);
+    expect(sender.sent).toHaveLength(0);
+    const ev = (await call("alice", "GET", "/events")).body as unknown as { type: string }[];
+    expect(ev.some((e) => e.type === "handover")).toBe(true);
+    expect(ev.some((e) => e.type === "paused")).toBe(true);
+
+    expect((await call("alice", "POST", `/contacts/${c.id}/resume`)).status).toBe(200);
+    await postWebhook(textEvent("USER_H", 1700000000205, "請問價格"));
+    await sleep(30);
+    expect(sender.sent).toHaveLength(1);
+    expect(alice.id).toBe(c.user_id);
+  });
+
+  it("我們剛送完就有別的程式回覆 → 記錄為衝突，不暫停", async () => {
+    sender.sent.length = 0;
+    await postWebhook(textEvent("USER_K", 1700000000301, "價格？"));
+    await sleep(30);
+    expect(sender.sent).toHaveLength(1);
+    await postWebhook(echoEvent("USER_K", 1700000000302, "263902037430900"));
+    await sleep(20);
+    const ch = channels.byExternalId(db, PAGE_ID)!;
+    expect(contacts.find(db, ch.id, "USER_K")!.paused_until ?? null).toBeNull();
+    expect(((await call("alice", "GET", "/overview")).body.conflicts_7d as number)).toBeGreaterThan(0);
+  });
+});
+
+describe("連線健康", () => {
+  it("授權時取消勾選必要權限 → 回報缺少的權限", async () => {
+    grantedPerms = ["pages_show_list", "pages_manage_metadata"];
+    const start = await fetch(`${base}/auth/facebook?rerequest=1`, { headers: { cookie: sessions.alice }, redirect: "manual" });
+    const dialog = new URL(start.headers.get("location")!);
+    expect(dialog.searchParams.get("auth_type")).toBe("rerequest");
+    const stateCookie = start.headers.get("set-cookie")!.split(";")[0];
+    const cb = await fetch(`${base}/auth/facebook/callback?code=CODE&state=${dialog.searchParams.get("state")}`, { headers: { cookie: `${sessions.alice}; ${stateCookie}` }, redirect: "manual" });
+    const pendingId = cb.headers.get("location")!.split("/").pop()!;
+    const pend = (await call("alice", "GET", `/facebook/pending/${pendingId}`)).body as unknown as { missing: { perm: string }[]; missing_instagram: { perm: string }[] };
+    expect(pend.missing.map((m) => m.perm)).toEqual(["pages_messaging"]);
+    expect(pend.missing_instagram.map((m) => m.perm)).toEqual(["instagram_basic", "instagram_manage_messages"]);
+    grantedPerms.push("pages_messaging", "instagram_basic", "instagram_manage_messages");
+  });
+
+  it("送出時權杖失效 → 頻道標記需要重新連接；檢查成功後恢復", async () => {
+    const broken: Sender = {
+      async send() {
+        throw new SendError("Graph API 400 (#190): Error validating access token", 400, 190, 460);
+      },
+      async getProfile() {
+        return null;
+      },
+    };
+    await handleIncomingEvent(
+      { platform: "messenger", channel_external_id: PAGE_ID, sender_id: "USER_T", timestamp: 1700000000401, kind: "message", text: "價格", postback_payload: null, referral: null, raw: null },
+      { db, sender: broken, publicUrl: "https://bot.example.com" },
+    );
+    const ch = channels.byExternalId(db, PAGE_ID)!;
+    expect(ch.status).toBe("broken");
+    expect(ch.last_error).toContain("190");
+    const r = await call("alice", "POST", `/channels/${ch.id}/test`);
+    expect(r.status).toBe(200);
+    expect(r.body.resubscribed).toBe(true); // 少了 message_echoes → 自動補訂
+    expect(channels.get(db, ch.id)!.status).toBe("ok");
+  });
+
+  it("「24 小時外」之類單一客人的錯誤不會把頻道標成失效", async () => {
+    const windowErr: Sender = {
+      async send() {
+        throw new SendError("outside window", 400, 10, 2018278);
+      },
+      async getProfile() {
+        return null;
+      },
+    };
+    await handleIncomingEvent(
+      { platform: "messenger", channel_external_id: PAGE_ID, sender_id: "USER_W", timestamp: 1700000000402, kind: "message", text: "價格", postback_payload: null, referral: null, raw: null },
+      { db, sender: windowErr, publicUrl: "https://bot.example.com" },
+    );
+    expect(channels.byExternalId(db, PAGE_ID)!.status).toBe("ok");
+  });
+});
+
+describe("廣告挑選器", () => {
+  it("沒授權讀取廣告 → authorized=false；授權後列出廣告與帶來的聯絡人數", async () => {
+    grantedPerms = grantedPerms.filter((p) => p !== "ads_read");
+    expect((await call("alice", "GET", "/meta/ads")).body.authorized).toBe(false);
+    grantedPerms.push("ads_read");
+    const start = await fetch(`${base}/auth/facebook?ads=1&return=%23automations%2Fnew`, { headers: { cookie: sessions.alice }, redirect: "manual" });
+    const dialog = new URL(start.headers.get("location")!);
+    expect(dialog.searchParams.get("scope")).toContain("ads_read");
+    const stateCookie = start.headers.get("set-cookie")!.split(";")[0];
+    const cb = await fetch(`${base}/auth/facebook/callback?code=CODE&state=${dialog.searchParams.get("state")}`, { headers: { cookie: `${sessions.alice}; ${stateCookie}` }, redirect: "manual" });
+    expect(cb.headers.get("location")).toBe("/#automations/new?ads=granted");
+    const r = await call("alice", "GET", "/meta/ads");
+    expect(r.body.authorized).toBe(true);
+    const ads = r.body.ads as { id: string; name: string; contacts: number }[];
+    expect(ads[0]).toMatchObject({ id: "AD777", name: "秋季新品" });
+    expect(ads[0].contacts).toBeGreaterThan(0);
+  });
+});
+
+describe("Meta 上線必備", () => {
+  it("隱私權政策、服務條款、資料刪除說明是公開頁面", async () => {
+    for (const [path, text] of [["/privacy", "隱私權政策"], ["/terms", "服務條款"], ["/data-deletion", "資料刪除說明"]]) {
+      const r = await fetch(`${base}${path}`);
+      expect(r.status).toBe(200);
+      expect(await r.text()).toContain(text);
+    }
+  });
+
+  it("有設定 ID 時用 config_id 開授權視窗", async () => {
+    await call("owner", "POST", "/settings", { meta_login_config_id: "987654321" });
+    const start = await fetch(`${base}/auth/facebook`, { headers: { cookie: sessions.alice }, redirect: "manual" });
+    const dialog = new URL(start.headers.get("location")!);
+    expect(dialog.searchParams.get("config_id")).toBe("987654321");
+    expect(dialog.searchParams.get("scope")).toBeNull();
+    expect((await call("owner", "POST", "/settings", { meta_login_config_id: "abc" })).status).toBe(400);
+    await call("owner", "POST", "/settings", { meta_login_config_id: "" });
+  });
+
+  it("取消授權 → 頻道標記失效；資料刪除 → 刪掉頻道與聯絡人並回傳確認碼", async () => {
+    const alice = users.byEmail(db, "alice@example.com")!;
+    channels.upsert(db, { user_id: alice.id, platform: "messenger", external_id: "PAGE_DEL", name: "要刪的專頁", access_token: "t", instagram_login: 0, fb_user_id: "FBU1" });
+    const ch = channels.byExternalId(db, "PAGE_DEL")!;
+    contacts.touch(db, ch, "USER_DEL");
+    const form = (sr: string) => ({ method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ signed_request: sr }) });
+
+    expect((await fetch(`${base}/meta/deauthorize`, form(signedRequest({ user_id: "FBU1" }, "wrong")))).status).toBe(400);
+    expect((await fetch(`${base}/meta/deauthorize`, form(signedRequest({ user_id: "FBU1" })))).status).toBe(200);
+    expect(channels.get(db, ch.id)!.status).toBe("broken");
+
+    const del = await fetch(`${base}/meta/data-deletion`, form(signedRequest({ user_id: "FBU1" })));
+    const body = (await del.json()) as { url: string; confirmation_code: string };
+    expect(body.url).toBe(`https://bot.example.com/data-deletion?code=${body.confirmation_code}`);
+    expect(channels.get(db, ch.id)).toBeUndefined();
+    expect(contacts.find(db, ch.id, "USER_DEL")).toBeUndefined();
+    const status = await fetch(`${base}/data-deletion?code=${body.confirmation_code}`);
+    expect(await status.text()).toContain("刪除要求已處理完成");
+  });
+});
+
+describe("健康檢查不誤判", () => {
+  it("Meta 暫時連不上不會把頻道標成失效；權杖錯誤才會", async () => {
+    const { runHealthCheck } = await import("../src/engine/health.js");
+    const down: typeof fetch = async () => {
+      throw new TypeError("fetch failed");
+    };
+    await runHealthCheck(db, down);
+    expect(channels.byExternalId(db, PAGE_ID)!.status).toBe("ok");
+    const expired: typeof fetch = async () => new Response(JSON.stringify({ error: { message: "Error validating access token", code: 190 } }), { status: 400 });
+    await runHealthCheck(db, expired);
+    expect(channels.byExternalId(db, PAGE_ID)!.status).toBe("broken");
+    // 重新檢查成功（假 Graph）→ 恢復
+    await runHealthCheck(db, fakeFetch);
+    expect(channels.byExternalId(db, PAGE_ID)!.status).toBe("ok");
   });
 });

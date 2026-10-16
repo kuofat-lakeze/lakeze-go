@@ -17,7 +17,11 @@ export const KEYS = {
   metaAppSecret: "meta_app_secret",
   verifyToken: "verify_token",
   graphVersion: "graph_version",
+  /** Facebook 登入（商家版）的設定 ID；有填就用 config_id 開授權視窗 */
+  metaLoginConfigId: "meta_login_config_id",
   publicUrl: "public_url",
+  /** 隱私權政策 / 服務條款上的聯絡信箱（沒填就用平台擁有者的 Email） */
+  supportEmail: "support_email",
   payuniMerId: "payuni_mer_id",
   payuniHashKey: "payuni_hash_key",
   payuniHashIv: "payuni_hash_iv",
@@ -36,6 +40,7 @@ export function seedFromEnv(db: DB) {
   seed(KEYS.metaAppSecret, "META_APP_SECRET");
   seed(KEYS.verifyToken, "META_VERIFY_TOKEN");
   seed(KEYS.graphVersion, "META_GRAPH_VERSION");
+  seed(KEYS.metaLoginConfigId, "META_LOGIN_CONFIG_ID");
   seed(KEYS.publicUrl, "PUBLIC_URL");
   seed(KEYS.sessionSecret, "SESSION_SECRET");
   seed(KEYS.payuniMerId, "PAYUNI_MER_ID");
@@ -83,6 +88,7 @@ export interface MetaConfig {
   appSecret: string;
   verifyToken: string;
   graphVersion: string;
+  loginConfigId?: string;
 }
 export function metaConfig(db: DB): MetaConfig {
   return {
@@ -90,6 +96,7 @@ export function metaConfig(db: DB): MetaConfig {
     appSecret: settingsStore.get(db, KEYS.metaAppSecret) ?? "",
     verifyToken: settingsStore.get(db, KEYS.verifyToken) ?? "",
     graphVersion: settingsStore.get(db, KEYS.graphVersion) || DEFAULT_GRAPH_VERSION,
+    loginConfigId: settingsStore.get(db, KEYS.metaLoginConfigId) ?? "",
   };
 }
 
