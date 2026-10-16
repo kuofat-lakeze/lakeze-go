@@ -67,6 +67,20 @@
     instagram: '<rect width="20" height="20" x="2" y="2" rx="5"/><circle cx="12" cy="12" r="4"/><line x1="17.5" x2="17.51" y1="6.5" y2="6.5"/>',
     receipt: '<path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 17.5v-11"/>',
     book: '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/>',
+    grip: '<circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/>',
+    image: '<rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>',
+    clock: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+    tag: '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/>',
+    branch: '<circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/>',
+    list: '<line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/>',
+    msgbtn: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h8"/>',
+    corner: '<polyline points="15 10 20 15 15 20"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/>',
+    minus: '<path d="M5 12h14"/>',
+    phone: '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/>',
+    video: '<path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/>',
+    lock: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+    maximize: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>',
+    workflow: '<rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/>',
     rocket: '<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>',
   };
   const icon = (name) =>
@@ -371,6 +385,7 @@
     const fn = PAGES[page] || PAGES.home;
     const el = $("#page");
     el.oninput = el.onchange = el.onclick = null;
+    document.body.classList.remove("focus-mode");
     try {
       await fn(el, args, query);
       window.scrollTo(0, 0);
@@ -389,45 +404,218 @@
     `<div class="empty"><div class="ic">${icon(ic)}</div><h3>${esc(title)}</h3><p>${text}</p>${actions ? `<div class="row">${actions}</div>` : ""}</div>`;
 
   /* =========================================================
-     Phone preview
+     Phone simulator
+     - phoneShell(): 擬真手機外框（Messenger / Instagram 外觀）
+     - script: [{kind:"ad"|"sys"|"user"|"bot"|"meta"|"delay", ...}]
+     - mountPhone(): 可播放動畫、點按鈕 / 選項走分支、開啟網址預覽
      ========================================================= */
-  function phoneMock({ sys, userText, bubbles }) {
-    const name = esc(state.me?.user?.name || "你的品牌");
-    return `<div class="phone">
-      <div class="phone-top"><div class="pa"><img src="/brand/mark.svg" alt=""/></div><div><b>${name}</b><span>通常會立即回覆</span></div></div>
-      <div class="phone-body">
-        ${sys ? `<div class="chat-sys">${icon("megaphone")}${esc(sys)}</div>` : ""}
-        ${userText ? `<div class="bubble-out">${esc(userText)}</div>` : ""}
-        ${(bubbles || []).map(renderBubble).join("") || '<div class="chat-meta">還沒有回覆內容</div>'}
-      </div></div>`;
-  }
-  function renderBubble(b) {
-    if (b.meta) return `<div class="chat-meta">${esc(b.meta)}</div>`;
-    if (b.image) return `<div class="bubble-in"><div class="chat-img" style="background-image:url('${esc(b.image)}')"></div></div>`;
-    const text = esc(b.text || "").trim() || '<span class="subtle">（訊息內容）</span>';
-    if (b.buttons?.length) {
-      return `<div class="bubble-in"><div class="bb card-bb"><div class="tx">${text}</div>${b.buttons.map((t) => `<span class="cb">${esc(t || "按鈕")}</span>`).join("")}</div></div>`;
-    }
-    return `<div class="bubble-in"><div class="bb">${text}</div>${b.quick?.length ? `<div class="qr-row">${b.quick.map((q) => `<span class="qr">${esc(q || "選項")}</span>`).join("")}</div>` : ""}</div>`;
-  }
   const demoName = (s) => String(s || "").replace(/\{\{\s*(first_name|full_name)\s*\}\}/g, "小明").replace(/\{\{[^}]*\}\}/g, "");
-  function stepsToBubbles(steps) {
-    const out = [];
-    for (const s of steps || []) {
-      if (s.type === "text") out.push({ text: demoName(s.text) });
-      else if (s.type === "buttons") out.push({ text: demoName(s.text), buttons: (s.buttons || []).map((b) => demoName(b.title)) });
-      else if (s.type === "quick_replies") out.push({ text: demoName(s.text), quick: (s.replies || []).map((r) => demoName(r.title)) });
-      else if (s.type === "image") out.push({ image: s.url });
-      else if (s.type === "delay") out.push({ meta: `等待 ${s.seconds} 秒` });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const STATUS_ICONS = `<svg viewBox="0 0 18 12" width="17" height="11" fill="currentColor" aria-hidden="true"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5" width="3" height="7" rx="1"/><rect x="10" y="2.5" width="3" height="9.5" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+    <svg viewBox="0 0 16 12" width="15" height="11" fill="currentColor" aria-hidden="true"><path d="M8 2.5c2.3 0 4.4.9 6 2.4l1.2-1.3C13.3 1.7 10.8.7 8 .7S2.7 1.7.8 3.6L2 4.9c1.6-1.5 3.7-2.4 6-2.4zm0 3.6c1.3 0 2.5.5 3.4 1.3l1.2-1.3C11.4 5 9.8 4.3 8 4.3S4.6 5 3.4 6.1l1.2 1.3C5.5 6.6 6.7 6.1 8 6.1zm0 3.5c.5 0 1 .2 1.3.5L8 11.5 6.7 10.1c.3-.3.8-.5 1.3-.5z"/></svg>
+    <svg viewBox="0 0 27 12" width="25" height="12" aria-hidden="true"><rect x=".5" y=".5" width="22" height="11" rx="3.5" fill="none" stroke="currentColor" opacity=".45"/><rect x="2" y="2" width="17" height="8" rx="2" fill="currentColor"/><path d="M24 4v4c.8-.3 1.3-1.1 1.3-2S24.8 4.3 24 4z" fill="currentColor" opacity=".45"/></svg>`;
+
+  function phoneShell({ platform = "messenger", size = "", body = "" } = {}) {
+    const name = esc(state.me?.user?.name || "你的品牌");
+    const ig = platform === "instagram";
+    return `<div class="device ${size} skin-${platform}">
+      <div class="device-screen">
+        <div class="status-bar"><span class="sb-time">9:41</span><span class="island"></span><span class="sb-icons">${STATUS_ICONS}</span></div>
+        <div class="app-bar">
+          <span class="ab-back">${icon("left")}</span>
+          <div class="ab-avatar"><img src="/brand/mark.svg" alt=""/>${ig ? "" : '<i class="online"></i>'}</div>
+          <div class="ab-who"><b>${name}</b><span data-sub>${ig ? "Instagram 商業帳號" : "通常會立即回覆"}</span></div>
+          <span class="ab-icons">${icon("phone")}${icon("video")}</span>
+        </div>
+        <div class="chat" data-chat>${body}</div>
+        <div class="composer"><span class="cp-btn">${icon("plus")}</span><span class="cp-input" data-ph>${ig ? "傳送訊息⋯" : "Aa"}</span><span class="cp-btn like">${ig ? icon("smile") : "👍"}</span></div>
+        <div class="sheet" data-sheet aria-hidden="true"></div>
+      </div>
+    </div>`;
+  }
+
+  function renderEvent(ev) {
+    switch (ev.kind) {
+      case "ad":
+        return `<div class="ad-ctx"><div class="ad-thumb">${icon("megaphone")}</div><div class="ad-tx"><b>${esc(ev.title || "你的 Facebook 廣告")}</b><span>贊助 · 點擊「傳送訊息」開啟對話</span></div></div>`;
+      case "sys":
+        return `<div class="chat-sys">${esc(ev.text)}</div>`;
+      case "meta":
+        return `<div class="chat-meta">${ev.icon ? icon(ev.icon) : ""}${esc(ev.text)}</div>`;
+      case "user":
+        return `<div class="msg out"><div class="bb">${esc(ev.text)}</div></div>`;
+      case "bot": {
+        const b = ev.bubble || {};
+        const stepAttr = ev.step != null ? ` data-step="${ev.step}"` : "";
+        if (b.image) return `<div class="msg in"${stepAttr}><span class="mav"><img src="/brand/mark.svg" alt=""/></span><div class="img-bb" style="background-image:url('${esc(b.image)}')">${b.image ? "" : icon("image")}</div></div>`;
+        const text = esc(b.text || "").trim() || '<span class="ph">（訊息內容）</span>';
+        const buttons = (b.buttons || []).map((x) => (typeof x === "string" ? { title: x, kind: "url" } : x));
+        const quick = (b.quick || []).map((x) => (typeof x === "string" ? { title: x } : x));
+        const bubble = buttons.length
+          ? `<div class="bb card"><div class="tx">${text}</div>${buttons
+              .map((x) => `<button type="button" class="cb" data-kind="${x.kind || "url"}" data-url="${esc(x.url || "")}" data-payload="${esc(x.payload || "")}" data-title="${esc(x.title || "")}">${esc(x.title || "按鈕")}${x.kind === "postback" ? "" : ""}</button>`)
+              .join("")}</div>`
+          : `<div class="bb">${text}</div>`;
+        return `<div class="msg in"${stepAttr}><span class="mav"><img src="/brand/mark.svg" alt=""/></span>${bubble}</div>${
+          quick.length ? `<div class="qr-row"${stepAttr}>${quick.map((q) => `<button type="button" class="qr" data-qr data-payload="${esc(q.payload || q.title || "")}" data-title="${esc(q.title || "")}">${esc(q.title || "選項")}</button>`).join("")}</div>` : ""
+        }`;
+      }
+      default:
+        return "";
     }
-    return out;
+  }
+
+  /** 舊版靜態預覽介面：{ sys, userText, bubbles } → 擬真手機 */
+  function phoneMock({ sys, userText, bubbles, size = "sm", platform = "messenger" } = {}) {
+    const script = [];
+    if (sys && /廣告/.test(sys)) script.push({ kind: "ad" });
+    else if (sys) script.push({ kind: "sys", text: sys });
+    if (userText) script.push({ kind: "user", text: userText });
+    for (const b of bubbles || []) script.push(b.meta ? { kind: "meta", text: b.meta } : { kind: "bot", bubble: b });
+    if (!(bubbles || []).length) script.push({ kind: "meta", text: "還沒有回覆內容" });
+    return phoneShell({ platform, size, body: script.map(renderEvent).join("") });
+  }
+  function stepsToBubbles(steps) {
+    return stepsToScript(steps).map((e) => (e.kind === "bot" ? e.bubble : e.kind === "delay" ? { meta: `等待 ${e.seconds} 秒` } : { meta: e.text }));
   }
   function graphMessagesToBubbles(messages) {
     return (messages || []).map((m) => {
-      if (m.attachment?.type === "template") return { text: m.attachment.payload.text, buttons: (m.attachment.payload.buttons || []).map((b) => b.title) };
+      if (m.attachment?.type === "template") return { text: m.attachment.payload.text, buttons: (m.attachment.payload.buttons || []).map((b) => ({ title: b.title, kind: b.type === "postback" ? "postback" : "url", url: b.url })) };
       if (m.attachment?.type === "image") return { image: m.attachment.payload.url };
-      return { text: m.text, quick: (m.quick_replies || []).map((q) => q.title) };
+      return { text: m.text, quick: (m.quick_replies || []).map((q) => ({ title: q.title, payload: q.payload })) };
     });
+  }
+
+  /** 把自動回覆的步驟轉成手機劇本；goto 會展開成目標流程的內容 */
+  function stepsToScript(steps, all = [], depth = 0) {
+    const out = [];
+    (steps || []).forEach((s, i) => {
+      const step = depth === 0 ? i : null;
+      switch (s.type) {
+        case "text":
+          out.push({ kind: "bot", step, bubble: { text: demoName(s.text) } });
+          break;
+        case "buttons":
+          out.push({ kind: "bot", step, bubble: { text: demoName(s.text), buttons: (s.buttons || []).map((b) => ({ title: demoName(b.title), kind: b.type === "postback" ? "postback" : "url", url: b.url, payload: b.payload })) } });
+          break;
+        case "quick_replies":
+          out.push({ kind: "bot", step, bubble: { text: demoName(s.text), quick: (s.replies || []).map((r) => ({ title: demoName(r.title), payload: r.payload || r.title })) } });
+          break;
+        case "image":
+          out.push({ kind: "bot", step, bubble: { image: s.url } });
+          break;
+        case "delay":
+          out.push({ kind: "delay", step, seconds: Number(s.seconds) || 0 });
+          break;
+        case "tag":
+          if (s.tag) out.push({ kind: "meta", step, icon: "tag", text: `已幫客人加上標籤「${s.tag}」（客人看不到）` });
+          break;
+        case "goto": {
+          const t = all.find((x) => x.id === Number(s.automation_id));
+          if (t && depth < 4) out.push(...stepsToScript(t.steps, all, depth + 1));
+          else out.push({ kind: "meta", step, text: "接續另一個自動回覆" });
+          break;
+        }
+      }
+    });
+    return out;
+  }
+  function triggerScript(a) {
+    const first = (a.trigger_value || "").split(/[,，]/)[0].trim();
+    switch (a.trigger_type) {
+      case "any_ad":
+      case "ad":
+      case "ref":
+        return [{ kind: "ad" }];
+      case "keyword":
+        return [{ kind: "user", text: first || "關鍵字" }];
+      case "get_started":
+        return [{ kind: "sys", text: "新朋友開啟了對話" }, { kind: "user", text: "開始使用" }];
+      case "default":
+        return [{ kind: "user", text: "你好，想問一下" }];
+      case "postback":
+        return [{ kind: "user", text: "（點選了一個選項）" }];
+      default:
+        return [];
+    }
+  }
+  /** 依 payload 找出對應的「按鈕回傳」自動回覆 */
+  function branchScript(all, payload) {
+    const t = all.find((x) => x.trigger_type === "postback" && x.trigger_value === payload);
+    if (!t) return [{ kind: "meta", icon: "alert", text: "這個選項還沒有設定回覆" }];
+    const s = stepsToScript(t.steps, all, 1);
+    if (!t.enabled) s.unshift({ kind: "meta", text: `「${stripExample(t.name)}」尚未啟用，實際不會送出` });
+    return s;
+  }
+
+  function mountPhone(host, { platform = "messenger", size = "", getAll = () => [] } = {}) {
+    let pl = platform;
+    let token = 0;
+    host.innerHTML = phoneShell({ platform: pl, size });
+    const chat = () => $("[data-chat]", host);
+    const sheet = () => $("[data-sheet]", host);
+    const scroll = () => { const c = chat(); c.scrollTop = c.scrollHeight; };
+    async function run(script, my, append) {
+      if (!append) chat().innerHTML = "";
+      for (const ev of script) {
+        if (my !== token) return;
+        if (ev.kind === "bot" || ev.kind === "delay") {
+          chat().insertAdjacentHTML("beforeend", '<div class="msg in typing"><span class="mav"><img src="/brand/mark.svg" alt=""/></span><div class="bb"><i></i><i></i><i></i></div></div>');
+          scroll();
+          await sleep(ev.kind === "delay" ? Math.min(ev.seconds, 4) * 600 + 300 : 700);
+          $(".typing", chat())?.remove();
+          if (my !== token) return;
+          if (ev.kind === "delay") continue;
+        } else await sleep(ev.kind === "ad" ? 150 : 350);
+        if (my !== token) return; // 等待期間被新的播放或預覽取代
+        chat().insertAdjacentHTML("beforeend", renderEvent(ev).replace(/class="(msg|qr-row|ad-ctx|chat-meta|chat-sys)/, 'class="pop $1'));
+        scroll();
+      }
+    }
+    const api = {
+      setPlatform(p) {
+        pl = p;
+        const d = $(".device", host);
+        d.className = d.className.replace(/skin-\w+/, `skin-${p}`);
+        $("[data-sub]", host).textContent = p === "instagram" ? "Instagram 商業帳號" : "通常會立即回覆";
+        $("[data-ph]", host).textContent = p === "instagram" ? "傳送訊息⋯" : "Aa";
+      },
+      show(script, highlight) {
+        token++;
+        api.closeSheet();
+        chat().innerHTML = script.map(renderEvent).join("") || '<div class="chat-meta">還沒有回覆內容</div>';
+        if (highlight != null) {
+          const els = $$(`[data-step="${highlight}"]`, chat());
+          els.forEach((e) => e.classList.add("hl"));
+          els[0]?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        } else scroll();
+      },
+      play(script) { api.closeSheet(); return run(script, ++token, false); },
+      append(script) { return run(script, ++token, true); },
+      stop() { token++; },
+      closeSheet() { const s = sheet(); s.classList.remove("open"); s.setAttribute("aria-hidden", "true"); },
+      openUrl(url) {
+        const s = sheet();
+        let hostName = url;
+        try { hostName = new URL(url).hostname; } catch { /* ignore */ }
+        s.innerHTML = `<div class="sh-bar"><button type="button" data-close-sheet>完成</button><span class="sh-url">${icon("lock")}${esc(hostName || "（尚未填寫網址）")}</span><span></span></div>
+          <div class="sh-body"><div class="sh-hero"></div><div class="sk w80"></div><div class="sk w60"></div><div class="sk w90"></div>
+          <div class="sh-note">${icon("external")}<div><b>客人會被帶到這個網址</b><span>${esc(url || "還沒有填寫網址")}</span></div></div></div>`;
+        s.classList.add("open");
+        s.setAttribute("aria-hidden", "false");
+      },
+    };
+    host.addEventListener("click", (e) => {
+      if (e.target.closest("[data-close-sheet]")) return api.closeSheet();
+      const qr = e.target.closest("[data-qr]");
+      const btn = e.target.closest("[data-kind]");
+      if (qr || btn?.dataset.kind === "postback") {
+        const t = qr || btn;
+        $$(".qr-row", chat()).forEach((r) => r.remove());
+        api.append([{ kind: "user", text: t.dataset.title || "選項" }, ...branchScript(getAll(), t.dataset.payload)]);
+      } else if (btn) api.openUrl(btn.dataset.url);
+    });
+    return api;
   }
 
   /* =========================================================
@@ -563,22 +751,29 @@
   const firstText = (a) => a.steps.find((s) => s.text)?.text || "";
   const smallIcon = (n) => icon(n).replace("<svg", '<svg style="width:14px;height:14px;vertical-align:-2px;flex:none"');
 
+  let previewAll = [];
   function previewModal(a) {
     modal({
       title: stripExample(a.name),
       size: "sm",
-      body: `<p class="small muted" style="margin-bottom:12px">觸發條件：${triggerSummary(a)}</p>${phoneMock({ sys: ["any_ad", "ad", "ref"].includes(a.trigger_type) ? "透過廣告開啟對話" : null, userText: a.trigger_type === "keyword" ? a.trigger_value.split(/[,，]/)[0].trim() : null, bubbles: stepsToBubbles(a.steps) })}`,
-      foot: `<button class="btn" data-close>關閉</button><a class="btn btn-primary" href="#automations/edit/${a.id}">使用這個範例</a>`,
+      body: `<p class="small muted" style="margin-bottom:12px">觸發條件：${triggerSummary(a)}。可以點手機裡的按鈕和選項試試看。</p><div id="pv-phone"></div>`,
+      foot: `<button class="btn" data-close>關閉</button><button class="btn" id="pv-replay">${icon("refresh")}重播</button><a class="btn" href="#automations/flow/${a.id}">${icon("workflow")}視覺編輯</a><a class="btn btn-primary" href="#automations/edit/${a.id}">使用這個範例</a>`,
     });
+    const ph = mountPhone($("#pv-phone"), { size: "md", getAll: () => previewAll });
+    const run = () => ph.play([...triggerScript(a), ...stepsToScript(a.steps, previewAll)]);
+    $("#pv-replay").onclick = run;
+    run();
   }
 
   PAGES.automations = async (el, args) => {
     if (args[0] === "new" && !args[1]) return renderTemplatePicker(el);
     if (args[0] === "new") return renderEditor(el, { template: args[1] });
     if (args[0] === "edit" && args[1]) return renderEditor(el, { id: Number(args[1]), advanced: args[2] === "advanced" });
+    if (args[0] === "flow" && args[1]) return renderEditor(el, { id: Number(args[1]), advanced: true });
 
     const [list, o] = await Promise.all([api("/automations"), api("/overview")]);
     state.overview = o;
+    previewAll = list;
     const mine = list.filter((a) => !a.is_example);
     const examples = list.filter((a) => a.is_example).sort((x, y) => x.id - y.id);
     el.innerHTML = `<div class="page">
@@ -596,7 +791,7 @@
               <td>${platformBadge(a.platform)}</td>
               <td>${num(a.triggered_count)} 次</td>
               <td><label class="switch" title="${a.enabled ? "已啟用" : "已停用"}"><input type="checkbox" data-toggle="${a.id}" ${a.enabled ? "checked" : ""} aria-label="啟用 ${esc(a.name)}"/><span class="slider"></span></label></td>
-              <td class="actions"><button class="btn btn-ghost btn-sm" data-test="${a.id}">${icon("play")}測試</button><a class="btn btn-ghost btn-sm" href="#automations/edit/${a.id}">${icon("edit")}編輯</a><button class="btn btn-ghost btn-sm btn-danger icon-btn" data-del="${a.id}" aria-label="刪除">${icon("trash")}</button></td>
+              <td class="actions"><button class="btn btn-ghost btn-sm" data-test="${a.id}">${icon("play")}測試</button><a class="btn btn-ghost btn-sm" href="#automations/flow/${a.id}" title="在視覺流程編輯器開啟">${icon("workflow")}視覺</a><a class="btn btn-ghost btn-sm" href="#automations/edit/${a.id}">${icon("edit")}編輯</a><button class="btn btn-ghost btn-sm btn-danger icon-btn" data-del="${a.id}" aria-label="刪除">${icon("trash")}</button></td>
             </tr>`,
             )
             .join("")}</tbody></table></div></div>`
@@ -661,11 +856,12 @@
       icon: "smile", color: "#e9f7f7", fg: "#2f9a9e", title: "歡迎訊息", desc: "第一次開啟對話的新朋友會收到這則訊息。", when: "想讓新朋友第一時間知道你是誰",
       data: { name: "歡迎訊息", trigger_type: "get_started", message: "歡迎 {{first_name}}！我們是 {{brand}}，有任何問題都可以直接留言 😊", buttons: [], tag: "" },
     },
-    blank: { icon: "sparkles", color: "#f3f3f5", fg: "#4a4a55", title: "從空白開始", desc: "多則訊息、快速回覆選單、延遲與分支流程。", when: "需要問答選單或多則訊息", data: null },
+    blank: { icon: "workflow", color: "#eef0ff", fg: "#4f46e5", title: "視覺流程編輯器", desc: "像拼積木一樣拖拉區塊，組合多則訊息、選單與分支，右邊手機即時模擬。", tag: "拖拉設計", when: "需要問答選單、多則訊息或分支流程", data: null },
   };
 
   async function renderTemplatePicker(el) {
     const list = await api("/automations").catch(() => []);
+    previewAll = list;
     const examples = list.filter((a) => a.is_example).sort((x, y) => x.id - y.id);
     el.innerHTML = `<div class="page">
       ${backLink("#automations", "自動回覆")}
@@ -754,7 +950,7 @@
     }
     if (simple) return renderSimpleEditor(el, simple, a);
     const adv = a ? JSON.parse(JSON.stringify(a)) : { name: "", enabled: 1, priority: 0, platform: "any", channel_id: null, trigger_type: "any_ad", trigger_value: "", steps: [{ type: "text", text: "" }] };
-    return renderAdvancedEditor(el, adv);
+    return renderFlowBuilder(el, adv);
   }
 
   async function renderSimpleEditor(el, f, original) {
@@ -829,7 +1025,7 @@
                     <label class="field"><span class="label">幫客人加上標籤</span><input class="input" id="s-tag" value="${esc(f.tag)}" placeholder="例如：春季活動"/><span class="help">方便在聯絡人頁面辨識客人從哪來。</span></label>
                     <label class="field"><span class="label">優先順序</span><input class="input" type="number" id="s-priority" value="${f.priority}"/><span class="help">同時符合多個規則時，數字大的先用。</span></label>
                   </div>
-                  <div><a class="small" href="#automations/${original ? `edit/${original.id}/advanced` : "new/blank"}" id="to-advanced">切換到進階編輯器（多則訊息、快速回覆、延遲）→</a></div>
+                  <div><a class="small" href="#automations/${original ? `flow/${original.id}` : "new/blank"}" id="to-advanced">${smallIcon("workflow")} 用視覺流程編輯器開啟（拖拉多則訊息、選單、分支）→</a></div>
                 </div>
               </details>
             </div>
@@ -841,7 +1037,7 @@
           </div>
         </div>
         <div class="preview-col">
-          <div class="small muted" style="margin-bottom:8px;font-weight:500">客人會看到</div>
+          <div class="row between" style="margin-bottom:8px"><span class="small muted" style="font-weight:500">客人會看到</span><span class="row" style="gap:4px"><div class="seg sm" id="s-skin"><button type="button" data-skin="messenger" class="on">Messenger</button><button type="button" data-skin="instagram">IG</button></div><button type="button" class="btn btn-sm" id="s-play">${icon("play")}播放</button></span></div>
           <div id="preview"></div>
           <div class="tips">
             <b>${smallIcon("sparkles")} 寫出好回覆的 3 個訣竅</b>
@@ -892,12 +1088,11 @@
         toast("已加上追蹤參數");
       }));
     };
-    const preview = () => {
-      const T = f.trigger_type;
-      const sys = T === "any_ad" || T === "ad" || T === "ref" ? "透過廣告開啟對話" : T === "get_started" ? "按下「開始使用」" : null;
-      const userText = T === "keyword" ? (f.trigger_value.split(/[,，]/)[0] || "").trim() || "關鍵字" : T === "default" ? "你好" : null;
-      $("#preview").innerHTML = phoneMock({ sys, userText, bubbles: [{ text: demoName(f.message), buttons: f.buttons.map((b) => b.title) }] });
-    };
+    const simplePhone = mountPhone($("#preview"), { size: "md" });
+    const simpleScript = () => { const x = simpleToAutomation(f); return [...triggerScript(x), ...stepsToScript(x.steps)]; };
+    const preview = () => simplePhone.show(simpleScript());
+    $("#s-play").onclick = () => simplePhone.play(simpleScript());
+    $("#s-skin").onclick = (e) => { const k = e.target.closest("[data-skin]")?.dataset.skin; if (!k) return; simplePhone.setPlatform(k); $$("#s-skin button").forEach((b) => b.classList.toggle("on", b.dataset.skin === k)); };
     const checkItems = () => {
       const T = TRIGGERS[f.trigger_type];
       const filled = f.buttons.filter((b) => b.title.trim() || b.url.trim());
@@ -962,7 +1157,7 @@
     if (!original) {
       $("#to-advanced").onclick = (e) => {
         e.preventDefault();
-        renderAdvancedEditor(el, { ...simpleToAutomation(f), id: undefined });
+        renderFlowBuilder(el, { ...simpleToAutomation(f), id: undefined });
       };
     }
     // 試跑：直接用目前填的內容預覽（不必先儲存）
@@ -1011,167 +1206,525 @@
     refresh();
   }
 
-  /* ---- advanced editor ---- */
-  const STEP_LABEL = { text: "文字訊息", buttons: "文字 + 按鈕", quick_replies: "快速回覆", image: "圖片", delay: "等待", tag: "加標籤", goto: "接續另一個自動回覆" };
-  async function renderAdvancedEditor(el, a) {
-    const [all, chans] = await Promise.all([api("/automations"), api("/channels")]);
-    const isNew = !a.id;
-    const simpleOk = automationToSimple({ ...a, steps: a.steps || [] });
-    el.innerHTML = `<div class="page">
-      ${backLink("#automations", "自動回覆")}
-      ${pageHead(a.is_example ? `範例：${stripExample(a.name)}` : isNew ? "新增自動回覆（進階）" : "編輯自動回覆（進階）", "可以組合多則訊息、快速回覆、延遲與分支。", simpleOk && a.id ? `<a class="btn btn-sm" href="#automations/edit/${a.id}">切換到簡易模式</a>` : "")}
-      ${a.is_example ? `<div class="banner brand">${icon("book")}<div class="grow"><b>這是範例，目前不會自動回覆。</b> 這個範例示範「快速回覆選單」：客人點選項後，會觸發對應「按鈕回傳」的自動回覆。修改後按「使用並啟用」。</div></div>` : `<div class="banner info">${icon("info")}<div class="grow">進階編輯器可以組合多個步驟。想做問答選單：加一個「快速回覆」步驟，每個選項設定一個 payload，再為每個 payload 建立觸發條件為「按鈕回傳」的自動回覆。</div></div>`}
-      <div class="editor">
-        <div>
-          <div class="card">
-            <div class="form-section">
-              <div class="grid-2">
-                <label class="field"><span class="label">名稱</span><input class="input" data-p="name" value="${esc(a.name)}"/></label>
-                <label class="field"><span class="label">觸發條件</span><select class="input" data-p="trigger_type">${Object.entries(TRIGGERS).map(([k, t]) => `<option value="${k}" ${a.trigger_type === k ? "selected" : ""}>${t.t}</option>`).join("")}</select></label>
-              </div>
-              <div id="adv-tv" style="margin-top:14px"></div>
-              <div class="grid-3" style="margin-top:14px">
-                <label class="field"><span class="label">平台</span><select class="input" data-p="platform"><option value="any" ${a.platform === "any" ? "selected" : ""}>全部</option><option value="messenger" ${a.platform === "messenger" ? "selected" : ""}>Messenger</option><option value="instagram" ${a.platform === "instagram" ? "selected" : ""}>Instagram</option></select></label>
-                <label class="field"><span class="label">限定頻道</span><select class="input" data-p="channel_id"><option value="">不限</option>${chans.map((c) => `<option value="${c.id}" ${a.channel_id === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label>
-                <label class="field"><span class="label">優先順序</span><input class="input" type="number" data-p="priority" value="${a.priority}"/></label>
-              </div>
-            </div>
-            <div class="form-section">
-              <div class="row between" style="margin-bottom:14px"><div class="section-title">回覆步驟</div>
-                <div class="row"><select class="input" id="add-type" style="width:auto;height:32px">${Object.entries(STEP_LABEL).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select><button class="btn btn-sm" id="add-step">${icon("plus")}加入</button></div></div>
-              <div id="steps"></div>
-            </div>
-          </div>
-          <div class="sticky-actions"><a class="btn" href="#automations">取消</a><button class="btn btn-primary" id="adv-save" data-busy="儲存中">${icon("check")}${a.is_example ? "使用並啟用" : "儲存"}</button></div>
-        </div>
-        <div class="preview-col"><div class="small muted" style="margin-bottom:8px;font-weight:500">客人會看到</div><div id="preview"></div></div>
-      </div></div>`;
+  /* ---- visual flow builder ---- */
+  const BLOCKS = {
+    text: { label: "文字訊息", desc: "一則文字", icon: "message", color: "#1781c4" },
+    buttons: { label: "訊息 + 按鈕", desc: "導到網址或分支", icon: "msgbtn", color: "#e95b17" },
+    quick_replies: { label: "選單（快速回覆）", desc: "讓客人點選項", icon: "list", color: "#2f9a9e" },
+    image: { label: "圖片", desc: "商品或活動圖", icon: "image", color: "#8a5cf6" },
+    delay: { label: "等待", desc: "停幾秒再送下一則", icon: "clock", color: "#6e6e7a" },
+    tag: { label: "加標籤", desc: "標記這位客人", icon: "tag", color: "#16794a" },
+    goto: { label: "接續流程", desc: "跳到另一個自動回覆", icon: "corner", color: "#4f46e5" },
+  };
+  const STEP_LABEL = Object.fromEntries(Object.entries(BLOCKS).map(([k, v]) => [k, v.label]));
+  const newPayload = () => `OPT_${Date.now().toString(36).toUpperCase()}${Math.floor(Math.random() * 1296).toString(36).toUpperCase()}`;
+  function newBlock(type, all, selfId) {
+    switch (type) {
+      case "text": return { type, text: "" };
+      case "buttons": return { type, text: "", buttons: [{ type: "url", title: "立即查看", url: "", track: true }] };
+      case "quick_replies": return { type, text: "想了解哪一個呢？", replies: [{ title: "選項 A", payload: newPayload() }, { title: "選項 B", payload: newPayload() }] };
+      case "image": return { type, url: "" };
+      case "delay": return { type, seconds: 2 };
+      case "tag": return { type, tag: "" };
+      case "goto": return { type, automation_id: all.find((x) => x.id !== selfId)?.id ?? 0 };
+    }
+  }
+  function blockErrors(s) {
+    const e = [];
+    if (["text", "buttons", "quick_replies"].includes(s.type) && !String(s.text || "").trim()) e.push("請輸入訊息內容");
+    if (s.type === "buttons") {
+      if (!s.buttons.length) e.push("至少要有一個按鈕");
+      s.buttons.forEach((b, j) => {
+        if (!b.title.trim()) e.push(`按鈕 ${j + 1} 沒有文字`);
+        if (b.type === "url" && !isUrl(b.url)) e.push(`按鈕 ${j + 1} 的網址不完整`);
+        else if (b.type === "url" && /example\.com/i.test(b.url)) e.push(`按鈕 ${j + 1} 還是範例網址`);
+      });
+    }
+    if (s.type === "quick_replies") {
+      if (!s.replies.length) e.push("至少要有一個選項");
+      if (s.replies.some((r) => !r.title.trim())) e.push("有選項沒有文字");
+    }
+    if (s.type === "image" && !isUrl(s.url)) e.push("請填寫圖片網址");
+    if (s.type === "tag" && !String(s.tag || "").trim()) e.push("請填寫標籤名稱");
+    return e;
+  }
+  /** 區塊在畫布上的視覺化內容 */
+  function blockBody(s, others) {
+    const t = (x) => esc(demoName(x)).trim() || '<span class="ph">（還沒有內容）</span>';
+    switch (s.type) {
+      case "text": return `<div class="nb-bubble">${t(s.text)}</div>`;
+      case "buttons": return `<div class="nb-bubble card"><div class="tx">${t(s.text)}</div>${s.buttons.map((b) => `<span class="nb-btn">${b.type === "postback" ? icon("branch") : icon("link")}${esc(b.title || "按鈕")}</span>`).join("")}</div>`;
+      case "quick_replies": return `<div class="nb-bubble">${t(s.text)}</div><div class="nb-qr">${s.replies.map((r) => `<span>${esc(r.title || "選項")}</span>`).join("")}</div>`;
+      case "image": return isUrl(s.url) ? `<div class="nb-img" style="background-image:url('${esc(s.url)}')"></div>` : `<div class="nb-img empty">${icon("image")}<span>填寫圖片網址</span></div>`;
+      case "delay": return `<div class="nb-line">${icon("clock")}等待 <b>${Number(s.seconds) || 0} 秒</b>，客人會看到「輸入中⋯」</div>`;
+      case "tag": return `<div class="nb-line">${icon("tag")}加上標籤 <b>${esc(s.tag || "（未命名）")}</b></div>`;
+      case "goto": { const g = others.find((x) => x.id === Number(s.automation_id)); return `<div class="nb-line">${icon("corner")}接續 <b>${esc(g ? stripExample(g.name) : "（請選擇）")}</b></div>`; }
+    }
+    return "";
+  }
 
-    const preview = () => ($("#preview").innerHTML = phoneMock({ sys: ["any_ad", "ad", "ref"].includes(a.trigger_type) ? "透過廣告開啟對話" : null, bubbles: stepsToBubbles(a.steps) }));
-    const renderTv = () => {
+  async function renderFlowBuilder(el, a) {
+    const [allRaw, chans] = await Promise.all([api("/automations"), api("/channels")]);
+    let all = allRaw;
+    const isExample = !!a.is_example;
+    if (isExample) a.enabled = 1;
+    a.steps = a.steps || [];
+    // 補上沒有 payload 的選項 / 分支按鈕
+    for (const s of a.steps) {
+      if (s.type === "quick_replies") s.replies.forEach((r) => (r.payload = r.payload || newPayload()));
+      if (s.type === "buttons") s.buttons.forEach((b) => b.type === "postback" && (b.payload = b.payload || newPayload()));
+    }
+    // 小螢幕上編輯面板是底部抽屜，一開始先不打開以免蓋住畫布
+    let sel = window.innerWidth <= 1000 ? null : "trigger";
+    let dirty = false;
+    let zoom = Number(store.get(ukey("flow_zoom"))) || 1;
+    let pan = { x: 0, y: 0 };
+    let platform = a.platform === "instagram" ? "instagram" : "messenger";
+    const others = () => all.filter((x) => x.id !== a.id);
+    const allWithCurrent = () => [...others(), { ...a, id: a.id ?? -1 }];
+    const simpleOk = a.id && automationToSimple(a);
+
+    document.body.classList.add("focus-mode");
+    el.innerHTML = `<div class="builder">
+      <div class="b-top">
+        <a class="btn btn-ghost btn-sm" href="#automations" id="b-back">${icon("left")}<span class="hide-sm">自動回覆</span></a>
+        <div class="b-title"><input class="b-name" id="b-name" value="${esc(stripExample(a.name))}" placeholder="為這個流程命名" aria-label="流程名稱"/><span class="badge" id="b-state"></span></div>
+        <div class="grow"></div>
+        ${simpleOk ? `<a class="btn btn-ghost btn-sm hide-sm" href="#automations/edit/${a.id}">簡易模式</a>` : ""}
+        <label class="b-toggle"><span class="switch"><input type="checkbox" id="b-enabled" ${a.enabled !== 0 ? "checked" : ""}/><span class="slider"></span></span><span class="hide-sm">啟用</span></label>
+        <button class="btn btn-sm" id="b-play">${icon("play")}<span class="hide-sm">播放</span></button>
+        <button class="btn btn-primary btn-sm" id="b-save" data-busy="儲存中">${icon("check")}${isExample ? "使用並啟用" : "儲存"}</button>
+      </div>
+      ${isExample ? `<div class="b-banner">${icon("book")}<span><b>這是範例。</b>拖動、修改成你的內容，按「使用並啟用」就會開始運作。</span></div>` : ""}
+      <div class="b-main" id="b-main">
+        <aside class="b-palette" aria-label="區塊">
+          <div class="pal-title">拖曳區塊到流程</div>
+          ${Object.entries(BLOCKS).map(([k, b]) => `<button type="button" class="pal-item" data-block="${k}" style="--c:${b.color}"><span class="pi">${icon(b.icon)}</span><span class="pt"><b>${b.label}</b><small>${b.desc}</small></span></button>`).join("")}
+          <p class="pal-hint">${icon("info")}拖到流程中的虛線位置；也可以直接點一下加到最後。</p>
+        </aside>
+        <section class="b-canvas" id="b-canvas" aria-label="流程畫布">
+          <div class="b-stage" id="b-stage"></div>
+          <div class="b-zoom" role="group" aria-label="縮放"><button data-z="-" aria-label="縮小">${icon("minus")}</button><span id="b-zl"></span><button data-z="+" aria-label="放大">${icon("plus")}</button><button data-z="fit" aria-label="回到中央">${icon("maximize")}</button></div>
+          <div class="b-insp" id="b-insp"></div>
+        </section>
+        <aside class="b-phone" aria-label="手機模擬">
+          <div class="b-phone-head">
+            <div class="seg" id="b-skin"><button data-skin="messenger" class="${platform === "messenger" ? "on" : ""}">Messenger</button><button data-skin="instagram" class="${platform === "instagram" ? "on" : ""}">Instagram</button></div>
+            <button class="btn btn-ghost btn-sm icon-btn" id="b-replay" title="重新播放" aria-label="重新播放">${icon("refresh")}</button>
+          </div>
+          <div id="b-phone"></div>
+          <p class="b-phone-tip">${icon("click")}點手機裡的按鈕和選項，體驗客人實際的操作</p>
+        </aside>
+      </div>
+      <div class="b-tabs"><button data-tab="flow" class="on">${icon("workflow")}流程</button><button data-tab="phone">${icon("phone")}手機預覽</button></div>
+    </div>`;
+
+    const canvas = $("#b-canvas");
+    const stage = $("#b-stage");
+    const phone = mountPhone($("#b-phone"), { platform, getAll: allWithCurrent });
+    const markDirty = () => { dirty = true; updateState(); };
+    const updateState = () => {
+      const st = $("#b-state");
+      const errs = a.steps.reduce((n, s) => n + (blockErrors(s).length ? 1 : 0), 0) + (TRIGGERS[a.trigger_type].needs && !a.trigger_value.trim() ? 1 : 0);
+      st.className = `badge ${errs ? "warning" : dirty ? "info" : "success"}`;
+      st.textContent = errs ? `${errs} 個區塊待完成` : dirty ? "尚未儲存" : a.id ? "已儲存" : "新流程";
+    };
+    const applyTransform = () => {
+      stage.style.transform = `translate(calc(-50% + ${pan.x}px), ${pan.y}px) scale(${zoom})`;
+      $("#b-zl").textContent = `${Math.round(zoom * 100)}%`;
+    };
+    let phoneTimer;
+    const refreshPhone = () => {
+      clearTimeout(phoneTimer);
+      phoneTimer = setTimeout(() => phone.show([...triggerScript(a), ...stepsToScript(a.steps, allWithCurrent())], typeof sel === "number" ? sel : null), 120);
+    };
+    const findBranch = (payload) => all.find((x) => x.trigger_type === "postback" && x.trigger_value === payload && x.id !== a.id);
+
+    /* ---------- stage ---------- */
+    const dz = (i) => `<div class="dz" data-dz="${i}"><span class="dz-line"></span><button type="button" class="dz-add" data-insert="${i}" aria-label="在這裡新增區塊">${icon("plus")}</button><span class="dz-drop">放在這裡</span></div>`;
+    function renderStage() {
       const T = TRIGGERS[a.trigger_type];
-      $("#adv-tv").innerHTML = T.needs ? `<label class="field"><span class="label">${T.needs}</span><input class="input" data-p="trigger_value" value="${esc(a.trigger_value)}" placeholder="${esc(T.ph)}"/><span class="help">${T.help}</span></label>` : "";
+      const trigErr = T.needs && !a.trigger_value.trim();
+      stage.innerHTML = `
+        <div class="node trigger ${sel === "trigger" ? "sel" : ""} ${trigErr ? "err" : ""}" data-node="trigger" style="--c:#e95b17">
+          <div class="nh"><span class="ni">${icon("zap")}</span><span class="nt">觸發條件</span></div>
+          <div class="nb"><div class="trig-name">${esc(T.t)}</div>${a.trigger_value ? `<div class="trig-val">${esc(a.trigger_value)}</div>` : trigErr ? `<div class="n-err">${icon("alert")}請填寫${esc(T.needs)}</div>` : `<div class="small muted">${esc(T.d)}</div>`}
+            <div class="trig-pf">${a.platform === "instagram" ? icon("instagram") + "Instagram" : a.platform === "messenger" ? icon("facebook") + "Messenger" : icon("facebook") + icon("instagram") + "Messenger 與 Instagram"}</div></div>
+        </div>
+        ${dz(0)}
+        ${a.steps
+          .map((s, i) => {
+            const B = BLOCKS[s.type];
+            const errs = blockErrors(s);
+            const branches =
+              s.type === "quick_replies" ? s.replies.map((r, j) => ({ j, title: r.title, payload: r.payload }))
+                : s.type === "buttons" ? s.buttons.map((b, j) => (b.type === "postback" ? { j, title: b.title, payload: b.payload } : null)).filter(Boolean) : [];
+            return `<div class="node ${sel === i ? "sel" : ""} ${errs.length ? "err" : ""}" data-node="${i}" style="--c:${B.color}">
+              <div class="nh" data-drag="${i}" title="拖曳可調整順序"><span class="grip">${icon("grip")}</span><span class="ni">${icon(B.icon)}</span><span class="nt">${B.label}</span>
+                <span class="na"><button type="button" data-dup="${i}" aria-label="複製區塊" title="複製">${icon("copy")}</button><button type="button" data-delnode="${i}" aria-label="刪除區塊" title="刪除">${icon("trash")}</button></span></div>
+              <div class="nb">${blockBody(s, others())}${errs.length ? `<div class="n-err">${icon("alert")}${esc(errs[0])}</div>` : ""}</div>
+              ${branches.length ? `<div class="branches">${branches
+                .map((b) => {
+                  const t = findBranch(b.payload);
+                  return `<div class="br"><span class="br-opt">${esc(b.title || "選項")}</span><span class="br-arrow">${icon("right")}</span>${t ? `<button type="button" class="br-target" data-open="${t.id}">${icon("corner")}${esc(stripExample(t.name))}</button>` : `<button type="button" class="br-new" data-branch="${i}:${b.j}">${icon("plus")}設定這個選項的回覆</button>`}</div>`;
+                })
+                .join("")}</div>` : ""}
+            </div>${dz(i + 1)}`;
+          })
+          .join("")}
+        <div class="node-end">${a.steps.length ? icon("check") + "流程結束" : "從左邊拖一個區塊到這裡開始"}</div>`;
+      updateState();
+    }
+
+    /* ---------- inspector ---------- */
+    const insp = $("#b-insp");
+    function renderInspector() {
+      if (sel === null) { insp.classList.remove("open"); canvas.classList.remove("insp-open"); insp.innerHTML = ""; return; }
+      insp.classList.add("open");
+      canvas.classList.add("insp-open");
+      let title, body;
+      if (sel === "trigger") {
+        title = "觸發條件";
+        const T = TRIGGERS[a.trigger_type];
+        const ex = TRIGGER_EXAMPLES[a.trigger_type];
+        body = `<div class="field"><span class="label">什麼時候開始這個流程？</span><div class="insp-choices">
+            ${Object.entries(TRIGGERS).map(([k, t]) => `<label class="ic-row ${a.trigger_type === k ? "on" : ""}"><input type="radio" name="itrig" value="${k}" ${a.trigger_type === k ? "checked" : ""}/><span><b>${t.t}</b><small>${t.d}</small></span></label>`).join("")}
+          </div></div>
+          ${T.needs ? `<label class="field"><span class="label">${T.needs}</span><input class="input" data-a="trigger_value" value="${esc(a.trigger_value)}" placeholder="${esc(T.ph)}"/><span class="help">${T.help}</span></label>` : ""}
+          ${ex ? `<div class="scenario"><div class="sc-label">${smallIcon("info")} 實際情境</div><p>${esc(ex.scene)}</p>${ex.tip ? `<p class="sc-tip">${esc(ex.tip)}</p>` : ""}</div>` : ""}
+          <label class="field"><span class="label">平台</span><select class="input" data-a="platform"><option value="any" ${a.platform === "any" ? "selected" : ""}>Messenger 與 Instagram</option><option value="messenger" ${a.platform === "messenger" ? "selected" : ""}>只有 Messenger</option><option value="instagram" ${a.platform === "instagram" ? "selected" : ""}>只有 Instagram</option></select></label>
+          <div class="grid-2"><label class="field"><span class="label">限定帳號</span><select class="input" data-a="channel_id"><option value="">全部</option>${chans.map((c) => `<option value="${c.id}" ${a.channel_id === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label>
+          <label class="field"><span class="label">優先順序</span><input class="input" type="number" data-a="priority" value="${a.priority}"/></label></div>`;
+      } else {
+        const i = sel;
+        const s = a.steps[i];
+        const p = (k) => `${i}.${k}`;
+        title = BLOCKS[s.type].label;
+        switch (s.type) {
+          case "text":
+            body = msgField(s, p) + presetRow();
+            break;
+          case "buttons":
+            body = msgField(s, p) + `<div class="field"><span class="label">按鈕（最多 3 個）</span><div class="stack-sm">
+              ${s.buttons.map((b, j) => `<div class="insp-card">
+                <div class="row between"><div class="seg sm" data-bkind="${i}.${j}"><button type="button" data-v="url" class="${b.type === "url" ? "on" : ""}">${icon("link")}開網址</button><button type="button" data-v="postback" class="${b.type === "postback" ? "on" : ""}">${icon("branch")}分支</button></div><button type="button" class="btn btn-ghost btn-sm icon-btn" data-rmb="${i}.${j}" aria-label="移除按鈕">${icon("x")}</button></div>
+                <input class="input" data-s="${p(`buttons.${j}.title`)}" maxlength="20" value="${esc(b.title)}" placeholder="按鈕文字"/>
+                <div class="idea-chips">${BUTTON_IDEAS.map((t) => `<button type="button" class="idea" data-idea="${i}.${j}">${t}</button>`).join("")}</div>
+                ${b.type === "url" ? `<input class="input" data-s="${p(`buttons.${j}.url`)}" type="url" value="${esc(b.url)}" placeholder="https://your-site.com"/><a href="#" class="small" data-utm="${i}.${j}">加上追蹤參數</a>` : `<p class="small muted">客人點了會走到這個按鈕的分支回覆，可以在畫布上設定。</p>`}
+              </div>`).join("")}
+              ${s.buttons.length < 3 ? `<button type="button" class="btn btn-sm" data-addb="${i}">${icon("plus")}新增按鈕</button>` : ""}</div></div>`;
+            break;
+          case "quick_replies":
+            body = msgField(s, p) + `<div class="field"><span class="label">選項</span><span class="help">每個選項都可以接到不同的回覆，在畫布上的分支設定。</span><div class="stack-sm">
+              ${s.replies.map((r, j) => `<div class="row" style="flex-wrap:nowrap"><input class="input" data-s="${p(`replies.${j}.title`)}" maxlength="20" value="${esc(r.title)}" placeholder="選項文字"/><button type="button" class="btn btn-ghost btn-sm icon-btn" data-rmq="${i}.${j}" aria-label="移除選項">${icon("x")}</button></div>`).join("")}
+              ${s.replies.length < 11 ? `<button type="button" class="btn btn-sm" data-addq="${i}">${icon("plus")}新增選項</button>` : ""}</div></div>`;
+            break;
+          case "image":
+            body = `<label class="field"><span class="label">圖片網址</span><input class="input" data-s="${p("url")}" type="url" value="${esc(s.url)}" placeholder="https://your-site.com/photo.jpg"/><span class="help">支援 JPG、PNG、GIF。圖片需要是公開網址。</span></label>`;
+            break;
+          case "delay":
+            body = `<label class="field"><span class="label">等待 <b id="dl-v">${s.seconds}</b> 秒</span><input type="range" min="1" max="15" value="${s.seconds}" data-s="${p("seconds")}" data-num class="range"/><span class="help">讓對話節奏更自然，客人會看到「輸入中⋯」。</span></label>`;
+            break;
+          case "tag":
+            body = `<label class="field"><span class="label">標籤名稱</span><input class="input" data-s="${p("tag")}" value="${esc(s.tag)}" placeholder="例如：想了解價格"/><span class="help">客人看不到。可以在聯絡人頁面看到誰有這個標籤。</span></label>`;
+            break;
+          case "goto":
+            body = `<label class="field"><span class="label">接續到哪個自動回覆</span><select class="input" data-s="${p("automation_id")}" data-num>${others().map((x) => `<option value="${x.id}" ${x.id === Number(s.automation_id) ? "selected" : ""}>${esc(stripExample(x.name))}</option>`).join("")}</select><span class="help">送完這裡的內容後，接著送出所選流程的內容。</span></label>`;
+            break;
+        }
+      }
+      insp.innerHTML = `<div class="insp-head"><b>${esc(title)}</b><button type="button" class="btn btn-ghost btn-sm icon-btn" id="insp-x" aria-label="關閉">${icon("x")}</button></div><div class="insp-body stack">${body}</div>`;
+    }
+    const msgField = (s, p) => `<label class="field"><span class="label">訊息內容</span><textarea class="input" data-s="${p("text")}" maxlength="640" placeholder="嗨 {{first_name}}⋯">${esc(s.text)}</textarea>
+      <span class="var-chips"><button type="button" class="var-chip" data-var="{{first_name}}">客人名字</button><button type="button" class="var-chip" data-var="{{full_name}}">客人全名</button></span></label>`;
+    const presetRow = () => `<div class="preset-box"><div class="small" style="font-weight:500;margin-bottom:8px">${smallIcon("sparkles")} 套用範例文案</div><div class="preset-chips">${USE_CASES.map((u) => `<button type="button" class="preset" data-case="${u.k}">${u.t}</button>`).join("")}</div></div>`;
+
+    const select = (v) => {
+      sel = v;
+      renderStage();
+      renderInspector();
+      refreshPhone();
     };
-    const renderSteps = () => {
-      $("#steps").innerHTML = a.steps.map((s, i) => stepCard(s, i, all.filter((x) => x.id !== a.id))).join("") || `<p class="muted small">還沒有步驟。</p>`;
+    const changed = (rerenderInspector = false) => {
+      markDirty();
+      renderStage();
+      if (rerenderInspector) renderInspector();
+      refreshPhone();
     };
-    el.oninput = el.onchange = (e) => {
+    const insertAt = (idx, type) => {
+      a.steps.splice(idx, 0, newBlock(type, all, a.id));
+      sel = idx;
+      changed(true);
+    };
+    const moveTo = (from, to) => {
+      if (to === from || to === from + 1) return;
+      const [s] = a.steps.splice(from, 1);
+      const dest = to > from ? to - 1 : to;
+      a.steps.splice(dest, 0, s);
+      sel = dest;
+      changed(true);
+    };
+
+    /* ---------- inspector events ---------- */
+    insp.addEventListener("input", (e) => {
       const t = e.target;
-      if (t.dataset.p) {
+      if (t.name === "itrig") return;
+      if (t.dataset.a) {
         let v = t.value;
-        if (t.dataset.p === "priority") v = Number(v) || 0;
-        if (t.dataset.p === "channel_id") v = v === "" ? null : Number(v);
-        a[t.dataset.p] = v;
-        if (t.dataset.p === "trigger_type" && e.type === "change") renderTv();
+        if (t.dataset.a === "priority") v = Number(v) || 0;
+        if (t.dataset.a === "channel_id") v = v === "" ? null : Number(v);
+        a[t.dataset.a] = v;
+        if (t.dataset.a === "platform" && v !== "any") { platform = v; setSkin(v); }
+        return changed();
       }
       if (t.dataset.s) {
         const path = t.dataset.s.split(".");
         let o = a.steps;
         for (const k of path.slice(0, -1)) o = o[k];
-        let v = t.type === "checkbox" ? t.checked : t.value;
-        if (t.type === "number") v = Number(v) || 0;
-        o[path[path.length - 1]] = v;
+        o[path[path.length - 1]] = t.dataset.num !== undefined ? Number(t.value) : t.value;
+        if (t.type === "range") $("#dl-v").textContent = t.value;
+        changed();
       }
-      if (t.dataset.btype && e.type === "change") {
-        const [i, j] = t.dataset.btype.split(".").map(Number);
-        const title = a.steps[i].buttons[j].title;
-        a.steps[i].buttons[j] = t.value === "postback" ? { type: "postback", title, payload: "" } : { type: "url", title, url: "", track: true };
-        renderSteps();
-      }
-      preview();
-    };
-    el.onclick = (e) => {
-      const b = e.target.closest("[data-act]");
+    });
+    insp.addEventListener("change", (e) => {
+      const t = e.target;
+      if (t.name === "itrig") { a.trigger_type = t.value; if (!TRIGGERS[t.value].needs) a.trigger_value = ""; return changed(true); }
+      if (t.tagName === "SELECT") insp.dispatchEvent(new Event("input", { bubbles: true })) || null;
+    });
+    insp.addEventListener("click", (e) => {
+      const b = e.target.closest("button, a");
       if (!b) return;
-      const [i, j] = (b.dataset.idx || "").split(".").map(Number);
-      const s = a.steps[i];
-      switch (b.dataset.act) {
-        case "rm": a.steps.splice(i, 1); break;
-        case "up": if (i > 0) [a.steps[i - 1], a.steps[i]] = [a.steps[i], a.steps[i - 1]]; break;
-        case "down": if (i < a.steps.length - 1) [a.steps[i + 1], a.steps[i]] = [a.steps[i], a.steps[i + 1]]; break;
-        case "add-btn": if (s.buttons.length < 3) s.buttons.push({ type: "url", title: "", url: "", track: true }); break;
-        case "rm-btn": s.buttons.splice(j, 1); break;
-        case "add-qr": s.replies.push({ title: "", payload: "" }); break;
-        case "rm-qr": s.replies.splice(j, 1); break;
-        default: return;
+      if (b.id === "insp-x") return select(null);
+      const pair = (v) => v.split(".").map(Number);
+      if (b.dataset.var) {
+        const ta = $("textarea", insp);
+        const st = ta.selectionStart ?? ta.value.length;
+        ta.value = ta.value.slice(0, st) + b.dataset.var + ta.value.slice(ta.selectionEnd ?? st);
+        ta.dispatchEvent(new Event("input", { bubbles: true }));
+        ta.focus();
+        return;
       }
-      renderSteps();
-      preview();
-    };
-    $("#add-step").onclick = () => {
-      const t = $("#add-type").value;
-      a.steps.push({
-        text: { type: "text", text: "" },
-        buttons: { type: "buttons", text: "", buttons: [{ type: "url", title: "", url: "", track: true }] },
-        quick_replies: { type: "quick_replies", text: "", replies: [{ title: "", payload: "" }] },
-        image: { type: "image", url: "" },
-        delay: { type: "delay", seconds: 2 },
-        tag: { type: "tag", tag: "" },
-        goto: { type: "goto", automation_id: all.find((x) => x.id !== a.id)?.id ?? 0 },
-      }[t]);
-      renderSteps();
-      preview();
-    };
-    $("#adv-save").onclick = (e) =>
-      busy(e.currentTarget, async () => {
-        try {
-          const body = { ...a, name: stripExample(a.name) || "自動回覆", enabled: a.is_example ? true : a.enabled !== 0 };
-          if (a.id) await api(`/automations/${a.id}`, { method: "PUT", body });
-          else await api("/automations", { method: "POST", body });
-          toast("已儲存");
-          location.hash = "#automations";
-        } catch (err) {
-          toast(err.message, true);
-        }
-      });
-    renderTv();
-    renderSteps();
-    preview();
-  }
-  function stepCard(s, i, others) {
-    const p = (k) => `${i}.${k}`;
-    let body = "";
-    switch (s.type) {
-      case "text":
-        body = `<textarea class="input" data-s="${p("text")}" placeholder="訊息內容">${esc(s.text)}</textarea>`;
-        break;
-      case "buttons":
-        body = `<textarea class="input" data-s="${p("text")}" placeholder="按鈕上方的文字">${esc(s.text)}</textarea>
-          ${s.buttons
-            .map(
-              (b, j) => `<div class="btn-line">
-                <input class="input" data-s="${p(`buttons.${j}.title`)}" maxlength="20" value="${esc(b.title)}" placeholder="按鈕文字"/>
-                ${b.type === "postback" ? `<input class="input" data-s="${p(`buttons.${j}.payload`)}" value="${esc(b.payload)}" placeholder="payload"/>` : `<input class="input" data-s="${p(`buttons.${j}.url`)}" value="${esc(b.url)}" placeholder="https://"/>`}
-                <select class="input" data-btype="${i}.${j}" style="width:auto"><option value="url" ${b.type === "url" ? "selected" : ""}>開網址</option><option value="postback" ${b.type === "postback" ? "selected" : ""}>回傳 payload</option></select>
-                <button class="btn btn-ghost icon-btn" data-act="rm-btn" data-idx="${i}.${j}" aria-label="移除">${icon("x")}</button>
-              </div>`,
-            )
-            .join("")}
-          ${s.buttons.length < 3 ? `<div><button class="btn btn-sm" data-act="add-btn" data-idx="${i}">${icon("plus")}按鈕</button></div>` : ""}`;
-        break;
-      case "quick_replies":
-        body = `<textarea class="input" data-s="${p("text")}" placeholder="問題">${esc(s.text)}</textarea>
-          ${s.replies.map((r, j) => `<div class="btn-line" style="grid-template-columns:1fr 1fr auto"><input class="input" data-s="${p(`replies.${j}.title`)}" maxlength="20" value="${esc(r.title)}" placeholder="選項文字"/><input class="input" data-s="${p(`replies.${j}.payload`)}" value="${esc(r.payload)}" placeholder="payload（可留空）"/><button class="btn btn-ghost icon-btn" data-act="rm-qr" data-idx="${i}.${j}" aria-label="移除">${icon("x")}</button></div>`).join("")}
-          <div><button class="btn btn-sm" data-act="add-qr" data-idx="${i}">${icon("plus")}選項</button></div>`;
-        break;
-      case "image":
-        body = `<input class="input" data-s="${p("url")}" value="${esc(s.url)}" placeholder="https://圖片網址.jpg"/>`;
-        break;
-      case "delay":
-        body = `<div class="row">等待 <input class="input" type="number" min="0" max="15" style="width:90px" data-s="${p("seconds")}" value="${s.seconds}"/> 秒（最多 15 秒）</div>`;
-        break;
-      case "tag":
-        body = `<input class="input" data-s="${p("tag")}" value="${esc(s.tag)}" placeholder="標籤名稱"/>`;
-        break;
-      case "goto":
-        body = `<select class="input" data-s="${p("automation_id")}">${others.map((x) => `<option value="${x.id}" ${x.id === Number(s.automation_id) ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>`;
-        break;
+      if (b.dataset.case) {
+        const u = USE_CASES.find((x) => x.k === b.dataset.case);
+        a.steps[sel].text = u.msg;
+        return changed(true);
+      }
+      if (b.dataset.idea) { const [i, j] = pair(b.dataset.idea); a.steps[i].buttons[j].title = b.textContent; return changed(true); }
+      if (b.dataset.addb) { a.steps[Number(b.dataset.addb)].buttons.push({ type: "url", title: "", url: "", track: true }); return changed(true); }
+      if (b.dataset.rmb) { const [i, j] = pair(b.dataset.rmb); a.steps[i].buttons.splice(j, 1); return changed(true); }
+      if (b.dataset.addq) { a.steps[Number(b.dataset.addq)].replies.push({ title: "", payload: newPayload() }); return changed(true); }
+      if (b.dataset.rmq) { const [i, j] = pair(b.dataset.rmq); a.steps[i].replies.splice(j, 1); return changed(true); }
+      if (b.closest("[data-bkind]") && b.dataset.v) {
+        const [i, j] = pair(b.closest("[data-bkind]").dataset.bkind);
+        const cur = a.steps[i].buttons[j];
+        a.steps[i].buttons[j] = b.dataset.v === "postback" ? { type: "postback", title: cur.title, payload: newPayload() } : { type: "url", title: cur.title, url: "", track: true };
+        return changed(true);
+      }
+      if (b.dataset.utm) {
+        e.preventDefault();
+        const [i, j] = pair(b.dataset.utm);
+        const btn = a.steps[i].buttons[j];
+        if (!isUrl(btn.url)) return toast("請先填好網址", true);
+        if (btn.url.includes("utm_source=")) return toast("已經有追蹤參數了");
+        const [base, hash = ""] = btn.url.split("#");
+        btn.url = `${base}${base.includes("?") ? "&" : "?"}${UTM}${hash ? `#${hash}` : ""}`;
+        toast("已加上追蹤參數");
+        return changed(true);
+      }
+    });
+
+    /* ---------- stage events ---------- */
+    stage.addEventListener("click", async (e) => {
+      const t = e.target;
+      const ins = t.closest("[data-insert]");
+      if (ins) return openInsertMenu(ins, Number(ins.dataset.insert));
+      const dup = t.closest("[data-dup]");
+      if (dup) { const i = Number(dup.dataset.dup); a.steps.splice(i + 1, 0, JSON.parse(JSON.stringify(a.steps[i]))); sel = i + 1; return changed(true); }
+      const del = t.closest("[data-delnode]");
+      if (del) { const i = Number(del.dataset.delnode); a.steps.splice(i, 1); sel = null; return changed(true); }
+      const open = t.closest("[data-open]");
+      if (open) return leaveTo(`#automations/flow/${open.dataset.open}`);
+      const br = t.closest("[data-branch]");
+      if (br) return createBranch(...br.dataset.branch.split(":").map(Number));
+      const node = t.closest("[data-node]");
+      if (node) select(node.dataset.node === "trigger" ? "trigger" : Number(node.dataset.node));
+    });
+    function openInsertMenu(anchor, idx) {
+      $(".insert-menu")?.remove();
+      const m = document.createElement("div");
+      m.className = "insert-menu";
+      m.innerHTML = Object.entries(BLOCKS).map(([k, b]) => `<button type="button" data-k="${k}" style="--c:${b.color}"><span class="pi">${icon(b.icon)}</span>${b.label}</button>`).join("");
+      document.body.appendChild(m);
+      const r = anchor.getBoundingClientRect();
+      m.style.left = `${Math.min(window.innerWidth - 220, r.left + r.width / 2 - 100)}px`;
+      m.style.top = `${Math.min(window.innerHeight - m.offsetHeight - 8, r.bottom + 6)}px`;
+      m.onclick = (ev) => { const k = ev.target.closest("[data-k]")?.dataset.k; if (k) { m.remove(); insertAt(idx, k); } };
+      setTimeout(() => document.addEventListener("pointerdown", function off(ev) { if (!ev.target.closest(".insert-menu")) { m.remove(); document.removeEventListener("pointerdown", off); } }), 0);
     }
-    return `<div class="step-card"><div class="sh"><b>${i + 1}. ${STEP_LABEL[s.type]}</b><span class="row" style="gap:2px">
-      <button class="btn btn-ghost btn-sm icon-btn" data-act="up" data-idx="${i}" aria-label="上移" style="transform:rotate(90deg)">${icon("left")}</button>
-      <button class="btn btn-ghost btn-sm icon-btn" data-act="down" data-idx="${i}" aria-label="下移" style="transform:rotate(-90deg)">${icon("left")}</button>
-      <button class="btn btn-ghost btn-sm icon-btn btn-danger" data-act="rm" data-idx="${i}" aria-label="刪除">${icon("trash")}</button></span></div>
-      <div class="sb">${body}</div></div>`;
+
+    /* ---------- drag & drop（滑鼠與觸控都可） ---------- */
+    function startDrag(e, { label, color, iconName, from, onClick, onDrop }) {
+      if (e.button !== undefined && e.button !== 0) return;
+      const sx = e.clientX;
+      const sy = e.clientY;
+      let ghost = null;
+      let target = null;
+      const srcNode = from != null ? $(`[data-node="${from}"]`, stage) : null;
+      const move = (ev) => {
+        if (!ghost) {
+          if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 6) return;
+          ghost = document.createElement("div");
+          ghost.className = "drag-ghost";
+          ghost.style.setProperty("--c", color);
+          ghost.innerHTML = `<span class="pi">${icon(iconName)}</span>${esc(label)}`;
+          document.body.appendChild(ghost);
+          canvas.classList.add("dragging");
+          srcNode?.classList.add("drag-src");
+        }
+        ev.preventDefault();
+        ghost.style.transform = `translate(${ev.clientX + 14}px, ${ev.clientY + 10}px)`;
+        const cr = canvas.getBoundingClientRect();
+        const inside = ev.clientX >= cr.left && ev.clientX <= cr.right && ev.clientY >= cr.top && ev.clientY <= cr.bottom;
+        let best = null;
+        let bd = Infinity;
+        if (inside) for (const z of $$(".dz", stage)) { const r = z.getBoundingClientRect(); const d = Math.abs(ev.clientY - (r.top + r.height / 2)); if (d < bd) { bd = d; best = z; } }
+        $$(".dz.hot", stage).forEach((z) => z !== best && z.classList.remove("hot"));
+        best?.classList.add("hot");
+        target = best ? Number(best.dataset.dz) : null;
+        // 拖到畫布邊緣時自動捲動
+        if (inside && ev.clientY > cr.bottom - 40) { pan.y -= 12; applyTransform(); }
+        if (inside && ev.clientY < cr.top + 40) { pan.y += 12; applyTransform(); }
+      };
+      const up = () => {
+        document.removeEventListener("pointermove", move);
+        document.removeEventListener("pointerup", up);
+        document.removeEventListener("pointercancel", up);
+        canvas.classList.remove("dragging");
+        srcNode?.classList.remove("drag-src");
+        $$(".dz.hot", stage).forEach((z) => z.classList.remove("hot"));
+        if (!ghost) return onClick?.();
+        ghost.remove();
+        if (target != null) onDrop(target);
+      };
+      document.addEventListener("pointermove", move, { passive: false });
+      document.addEventListener("pointerup", up);
+      document.addEventListener("pointercancel", up);
+    }
+    $$(".pal-item", el).forEach((p) => {
+      const k = p.dataset.block;
+      const B = BLOCKS[k];
+      p.addEventListener("pointerdown", (e) => { e.preventDefault(); startDrag(e, { label: B.label, color: B.color, iconName: B.icon, onClick: () => insertAt(a.steps.length, k), onDrop: (to) => insertAt(to, k) }); });
+      p.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); insertAt(a.steps.length, k); } });
+    });
+    stage.addEventListener("pointerdown", (e) => {
+      const h = e.target.closest("[data-drag]");
+      if (!h || e.target.closest("button")) return;
+      e.preventDefault();
+      const i = Number(h.dataset.drag);
+      const B = BLOCKS[a.steps[i].type];
+      startDrag(e, { label: B.label, color: B.color, iconName: B.icon, from: i, onClick: () => select(i), onDrop: (to) => moveTo(i, to) });
+    });
+
+    /* ---------- pan & zoom ---------- */
+    canvas.addEventListener("pointerdown", (e) => {
+      if (e.target.closest(".node, .dz-add, .b-insp, .b-zoom, .insert-menu")) return;
+      const sx = e.clientX - pan.x;
+      const sy = e.clientY - pan.y;
+      canvas.classList.add("panning");
+      const move = (ev) => { pan.x = ev.clientX - sx; pan.y = ev.clientY - sy; applyTransform(); };
+      const up = () => { canvas.classList.remove("panning"); document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", up); };
+      document.addEventListener("pointermove", move);
+      document.addEventListener("pointerup", up);
+    });
+    canvas.addEventListener("wheel", (e) => {
+      if (e.target.closest(".b-insp")) return;
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) setZoom(zoom * (e.deltaY < 0 ? 1.08 : 0.92));
+      else { pan.x -= e.deltaX; pan.y -= e.deltaY; applyTransform(); }
+    }, { passive: false });
+    const setZoom = (z) => { zoom = Math.min(1.5, Math.max(0.5, z)); store.set(ukey("flow_zoom"), zoom); applyTransform(); };
+    $(".b-zoom").onclick = (e) => {
+      const z = e.target.closest("[data-z]")?.dataset.z;
+      if (z === "+") setZoom(zoom + 0.1);
+      if (z === "-") setZoom(zoom - 0.1);
+      if (z === "fit") { pan = { x: 0, y: 0 }; setZoom(1); }
+    };
+
+    /* ---------- phone & top bar ---------- */
+    const setSkin = (p) => { platform = p; phone.setPlatform(p); $$("#b-skin button").forEach((b) => b.classList.toggle("on", b.dataset.skin === p)); };
+    $("#b-skin").onclick = (e) => { const s = e.target.closest("[data-skin]")?.dataset.skin; if (s) setSkin(s); };
+    const play = () => { clearTimeout(phoneTimer); showTab("phone"); phone.play([...triggerScript(a), ...stepsToScript(a.steps, allWithCurrent())]); store.set(ukey("tested"), true); };
+    $("#b-play").onclick = play;
+    $("#b-replay").onclick = play;
+    $("#b-name").oninput = (e) => { a.name = e.target.value; markDirty(); };
+    $("#b-enabled").onchange = (e) => { a.enabled = e.target.checked ? 1 : 0; markDirty(); };
+    const showTab = (t) => {
+      $("#b-main").dataset.tab = t;
+      $$(".b-tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === t));
+    };
+    $(".b-tabs").onclick = (e) => { const t = e.target.closest("[data-tab]")?.dataset.tab; if (t) showTab(t); };
+    async function leaveTo(hash) {
+      if (dirty && !(await confirmDialog("還有變更沒有儲存", "要離開這個流程嗎？未儲存的變更會消失。", "離開", true))) return;
+      dirty = false;
+      location.hash = hash;
+    }
+    $("#b-back").onclick = (e) => { e.preventDefault(); leaveTo("#automations"); };
+
+    function validateAll() {
+      if (TRIGGERS[a.trigger_type].needs && !a.trigger_value.trim()) return "trigger";
+      const i = a.steps.findIndex((s) => blockErrors(s).length);
+      if (i >= 0) return i;
+      if (!a.steps.length) return "empty";
+      return null;
+    }
+    async function save({ silent = false } = {}) {
+      const bad = validateAll();
+      if (bad === "empty") { toast("流程裡還沒有任何區塊", true); return null; }
+      if (bad !== null) { select(bad); toast("有區塊需要完成，已幫你打開", true); return null; }
+      const body = { ...a, name: stripExample($("#b-name").value).trim() || TRIGGERS[a.trigger_type].t, enabled: !!a.enabled };
+      try {
+        const r = a.id ? await api(`/automations/${a.id}`, { method: "PUT", body }) : await api("/automations", { method: "POST", body });
+        const wasNew = !a.id;
+        Object.assign(a, { id: r.id, is_example: 0, name: r.name });
+        all = [...others(), r];
+        dirty = false;
+        updateState();
+        $("#b-save").innerHTML = `${icon("check")}儲存`;
+        $(".b-banner")?.remove();
+        if (wasNew) history.replaceState(null, "", `#automations/flow/${r.id}`);
+        if (!silent) toast(a.enabled ? "已儲存並啟用 🎉" : "已儲存（目前未啟用）");
+        return r;
+      } catch (err) {
+        toast(err.message, true);
+        return null;
+      }
+    }
+    $("#b-save").onclick = (e) => busy(e.currentTarget, () => save());
+
+    async function createBranch(i, j) {
+      const s = a.steps[i];
+      const opt = s.type === "quick_replies" ? s.replies[j] : s.buttons[j];
+      if (!opt.title.trim()) { select(i); return toast("請先替這個選項取名字", true); }
+      if (!(await confirmDialog("設定選項的回覆", `會先儲存目前的流程，接著建立客人點「${opt.title}」之後要收到的回覆。`, "建立"))) return;
+      const saved = await save({ silent: true });
+      if (!saved) return;
+      try {
+        const created = await api("/automations", {
+          method: "POST",
+          body: { name: `選項回覆：${opt.title}`, enabled: true, priority: 0, platform: a.platform, channel_id: null, trigger_type: "postback", trigger_value: opt.payload, steps: [{ type: "text", text: `你選了「${opt.title}」，以下是相關資訊 👇` }] },
+        });
+        toast("已建立選項的回覆");
+        location.hash = `#automations/flow/${created.id}`;
+      } catch (err) {
+        toast(err.message, true);
+      }
+    }
+
+    applyTransform();
+    renderStage();
+    renderInspector();
+    refreshPhone();
+    if (!a.id && !a.steps.length) setTimeout(() => toast("從左邊拖一個區塊到流程中開始吧"), 300);
   }
 
   /* ---- test modal ---- */
