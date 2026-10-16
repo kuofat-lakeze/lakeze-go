@@ -36,9 +36,18 @@
 
 按按鈕 → 用 GitHub 登入 Render → Apply。設定都在 `render.yaml`（Docker、1 GB 持久磁碟、Starter 方案約 US$7/月）。免費方案沒有磁碟且會休眠，Meta 的 Webhook 會超時，請勿使用。
 
-### Railway
+### Railway（推薦，約 US$5/月）
 
-repo 內有 `railway.json`。新增專案 → Deploy from GitHub repo → 選 `lakeze-go`，到服務的 **Volumes** 掛一顆磁碟到 `/data`。
+repo 內有 `railway.json`（用 Dockerfile 建置、健康檢查 `/healthz`）。
+
+1. [railway.com](https://railway.com) 用 GitHub 登入，升級到 **Hobby**（每月 5 美元，內含 5 美元用量；本專案約用 0.5 GB RAM + 1 GB 磁碟，正常不會超過）。
+2. **New Project → Deploy from GitHub repo → `kuofat-lakeze/lakeze-go`**。Railway 會自動偵測 Dockerfile 開始建置。
+3. 點進服務 → **Settings → Networking → Generate Domain**，拿到 `xxx.up.railway.app` 網址（之後可綁自己的網域）。
+4. **Settings → Volumes → Add Volume**，Mount Path 填 **`/data`**。沒有這步資料會在每次部署後消失。
+5. **Settings → Deploy → Region** 選 **Southeast Asia (Singapore)**，離台灣最近。
+6. 等部署完成，打開網址註冊第一個帳號（即平台擁有者）。
+
+不需要設定任何環境變數：`PORT` Railway 會自動給，資料庫路徑預設就是 `/data/app.db`，對外網址會從 Railway 的 proxy 標頭自動判斷。Volume 權限由映像的 entrypoint 在啟動時自動處理，不需要 `RAILWAY_RUN_UID`。
 
 ### Docker（自己的主機）
 
